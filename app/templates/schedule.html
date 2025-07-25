@@ -159,6 +159,7 @@ function loadParticipants(trainingId) {
                     const row = document.createElement('tr');
                     const lightChecked = participant.jersey_type === 'light' ? 'checked' : '';
                     const darkChecked = participant.jersey_type === 'dark' ? 'checked' : '';
+                    const savedJerseyType = participant.jersey_type || '';
                     
                     row.innerHTML = `
                         <td>
@@ -178,6 +179,7 @@ function loadParticipants(trainingId) {
                                        value="light" 
                                        data-participant="${participant.username}"
                                        ${lightChecked}
+                                       data-saved-jersey="${savedJerseyType}"
                                        onchange="checkJerseyChanges(${trainingId})">
                                 <label class="form-check-label ms-2" for="light-${trainingId}-${index}">
                                     <img src="/static/white_tshirt.svg" alt="Светлая майка" class="jersey-icon">
@@ -192,6 +194,7 @@ function loadParticipants(trainingId) {
                                        value="dark" 
                                        data-participant="${participant.username}"
                                        ${darkChecked}
+                                       data-saved-jersey="${savedJerseyType}"
                                        onchange="checkJerseyChanges(${trainingId})">
                                 <label class="form-check-label ms-2" for="dark-${trainingId}-${index}">
                                     <img src="/static/black_tshirt.svg" alt="Темная майка" class="jersey-icon">
@@ -255,7 +258,7 @@ function checkJerseyChanges(trainingId) {
         }
     });
     
-    if (allSelected) {
+    if (allSelected && hasChanges) { // Кнопка активна только если все выбраны И есть изменения
         distributeButton.disabled = false;
         distributeButton.classList.remove('btn-secondary');
         distributeButton.classList.add('btn-success');

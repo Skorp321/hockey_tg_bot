@@ -5,13 +5,23 @@ from ..models import Training, Registration
 from ..config import Config
 from ..database import db_session
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
+def get_standard_keyboard():
+    """Создает стандартную клавиатуру с основными кнопками"""
+    return InlineKeyboardMarkup([
         [InlineKeyboardButton("Записаться на ближайшую тренировку", callback_data='register')],
         [InlineKeyboardButton("Показать расписание", callback_data='schedule')],
         [InlineKeyboardButton("Мои записи", callback_data='my_registrations')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    ])
+
+def get_info_keyboard():
+    """Создает клавиатуру только с информационными кнопками (без записи)"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Показать расписание", callback_data='schedule')],
+        [InlineKeyboardButton("Мои записи", callback_data='my_registrations')]
+    ])
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reply_markup = get_standard_keyboard()
     await update.message.reply_text(
         'Добро пожаловать! Выберите действие:',
         reply_markup=reply_markup
@@ -66,7 +76,9 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = f"✅ Вы записаны на тренировку:\n"
         message += f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
         message += f"👥 Участников: {participants_count + 1}/{training.max_participants}"
-        await query.message.reply_text(message)
+        
+        reply_markup = get_standard_keyboard()
+        await query.message.reply_text(message, reply_markup=reply_markup)
     except Exception as e:
         db_session.rollback()
         print(f"Error during registration: {e}")
@@ -83,7 +95,9 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not trainings:
         await query.answer("Нет запланированных тренировок")
-        await query.message.reply_text("В данный момент нет запланированных тренировок")
+        message = "В данный момент нет запланированных тренировок"
+        reply_markup = get_standard_keyboard()
+        await query.message.reply_text(message, reply_markup=reply_markup)
         return
     
     # Формируем сообщение с расписанием
@@ -93,13 +107,7 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"🕒 {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
         message += f"👥 Участников: {participants}/{training.max_participants}\n\n"
     
-    # Создаем клавиатуру с кнопками как в стартовом меню
-    keyboard = [
-        [InlineKeyboardButton("Записаться на ближайшую тренировку", callback_data='register')],
-        [InlineKeyboardButton("Показать расписание", callback_data='schedule')],
-        [InlineKeyboardButton("Мои записи", callback_data='my_registrations')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = get_standard_keyboard()
     
     await query.answer()
     await query.message.reply_text(message, reply_markup=reply_markup)
@@ -118,7 +126,9 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
     
     if not registrations:
         await query.answer("У вас нет активных записей")
-        await query.message.reply_text("У вас нет активных записей на тренировки")
+        message = "У вас нет активных записей на тренировки"
+        reply_markup = get_standard_keyboard()
+        await query.message.reply_text(message, reply_markup=reply_markup)
         return
     
     # Формируем сообщение со списком записей и кнопками отмены для каждой тренировки
@@ -127,6 +137,19 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
     
     for reg in registrations:
         message += f"📅 {reg.training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
+        
+        # Добавляем информацию о выбранной футболке
+        if reg.jersey_type:
+            if reg.jersey_type.value == 'light':
+                jersey_info = "⚪"
+            else:
+                jersey_info = "⚫"
+            message += f"👕 {jersey_info}\n"
+        else:
+            message += f"👕 Футболка не выбрана\n"
+        
+        message += "\n"
+        
         keyboard.append([InlineKeyboardButton(
             f"❌ Отменить запись на {reg.training.date_time.strftime('%d.%m.%Y %H:%M')}",
             callback_data=f'cancel_{reg.id}'
@@ -155,7 +178,9 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
         db_session.delete(registration)
         db_session.commit()
         await query.answer("Запись отменена")
-        await query.message.reply_text("Ваша запись успешно отменена")
+        message = "Ваша запись успешно отменена"
+        reply_markup = get_standard_keyboard()
+        await query.message.reply_text(message, reply_markup=reply_markup)
     else:
         await query.answer("Запись не найдена")
 
@@ -168,7 +193,9 @@ async def view_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
         .first()
     
     if not training:
-        await update.message.reply_text("Нет запланированных тренировок.")
+        message = "Нет запланированных тренировок."
+        reply_markup = get_standard_keyboard()
+        await update.message.reply_text(message, reply_markup=reply_markup)
         return
     
     # Получаем список участников
@@ -183,11 +210,21 @@ async def view_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if registrations:
         for i, reg in enumerate(registrations, 1):
             username = reg.username or "Без имени"
-            message += f"{i}. {username}\n"
+            
+            # Добавляем информацию о выбранной футболке
+            if reg.jersey_type:
+                if reg.jersey_type.value == 'light':
+                    jersey_info = "⚪"
+                else:
+                    jersey_info = "⚫"
+                message += f"{i}. {username} {jersey_info}\n"
+            else:
+                message += f"{i}. {username}\n"
     else:
         message += "Пока никто не записался"
     
-    await update.message.reply_text(message)
+    reply_markup = get_info_keyboard()
+    await update.message.reply_text(message, reply_markup=reply_markup)
 
 async def show_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список доступных команд"""
@@ -210,17 +247,13 @@ async def show_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """
         commands += admin_commands
     
-    await update.message.reply_text(commands)
+    reply_markup = get_standard_keyboard()
+    await update.message.reply_text(commands, reply_markup=reply_markup)
 
 # Добавим новый обработчик для возврата в главное меню
 async def return_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    keyboard = [
-        [InlineKeyboardButton("Записаться на ближайшую тренировку", callback_data='register')],
-        [InlineKeyboardButton("Показать расписание", callback_data='schedule')],
-        [InlineKeyboardButton("Мои записи", callback_data='my_registrations')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = get_standard_keyboard()
     await query.answer()
     await query.message.reply_text('Выберите действие:', reply_markup=reply_markup)
 

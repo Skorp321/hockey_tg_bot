@@ -142,21 +142,30 @@ def send_notifications(training_id):
         for registration in training.registrations:
             if registration.username in changed_participants and registration.jersey_type:
                 # Формируем индивидуальное сообщение для участника
-                training_type_text = "светлая" if registration.jersey_type.value == 'light' else "темная"
+                jersey_emoji = "⚪" if registration.jersey_type.value == 'light' else "⚫"
                 
                 message = f"🏒 *Уведомление о тренировке*\n\n"
                 message += f"📅 Дата: {training_date}\n"
-                message += f"🎯 Ваша майка: {training_type_text.upper()}\n"
+                message += f"🎯 Ваша майка: {jersey_emoji}\n"
                 message += f"👥 Всего участников: {len(training.registrations)}/{training.max_participants}"
                 
                 try:
-                    # Отправляем сообщение через Telegram Bot API
+                    # Создаем клавиатуру с кнопками
+                    keyboard = {
+                        'inline_keyboard': [
+                            [{'text': 'Показать расписание', 'callback_data': 'schedule'}],
+                            [{'text': 'Мои записи', 'callback_data': 'my_registrations'}]
+                        ]
+                    }
+                    
+                    # Отправляем сообщение через Telegram Bot API с кнопками
                     telegram_response = requests.post(
                         f'https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/sendMessage',
                         json={
                             'chat_id': registration.user_id,
                             'text': message,
-                            'parse_mode': 'Markdown'
+                            'parse_mode': 'Markdown',
+                            'reply_markup': keyboard
                         },
                         timeout=10
                     )
