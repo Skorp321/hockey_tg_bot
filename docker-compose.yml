@@ -1,0 +1,41 @@
+services:
+  bot:
+    build: .
+    container_name: training_bot
+    restart: always
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./.env:/app/.env
+    environment:
+      - TZ=Europe/Moscow
+    networks:
+      - bot_network
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:13-alpine
+    container_name: training_bot_db
+    restart: always
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=training_bot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - bot_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d training_bot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+networks:
+  bot_network:
+    driver: bridge
+
+volumes:
+  postgres_data:

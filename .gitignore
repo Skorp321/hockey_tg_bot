@@ -1,0 +1,5 @@
+venv
+training_bot.db
+*.pyc
+.env
+
