@@ -31,22 +31,41 @@ async def main():
     config.bind = ["0.0.0.0:5000"]
     config.use_reloader = False
     
-    # Запускаем бота
+    bot_app = None
+    
+    # Запускаем бота с повторными попытками
+    max_retries = 5
+    retry_delay = 10  # секунд
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"🔄 Попытка запуска бота {attempt + 1}/{max_retries}")
+            bot_app = await start_bot()
+            break
+        except Exception as e:
+            print(f"❌ Ошибка при запуске бота (попытка {attempt + 1}): {e}")
+            if attempt < max_retries - 1:
+                print(f"⏳ Повторная попытка через {retry_delay} секунд...")
+                await asyncio.sleep(retry_delay)
+            else:
+                print("❌ Не удалось запустить бота после всех попыток")
+                # Продолжаем работу только с веб-сервером
+                bot_app = None
+    
+    # Добавляем обработчики сигналов для корректного завершения
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(
+            sig,
+            lambda s=sig: asyncio.create_task(shutdown(s, loop, bot_app))
+        )
+    
     try:
-        bot_app = await start_bot()
-        
-        # Добавляем обработчики сигналов для корректного завершения
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(
-                sig,
-                lambda s=sig: asyncio.create_task(shutdown(s, loop, bot_app))
-            )
-        
         # Запускаем веб-сервер
+        print("🌐 Запуск веб-сервера...")
         await serve(app, config)
     except Exception as e:
-        print(f"Error occurred: {e}")
-        if 'bot_app' in locals():
+        print(f"❌ Ошибка веб-сервера: {e}")
+        if bot_app:
             await bot_app.stop()
             await bot_app.shutdown()
         raise
