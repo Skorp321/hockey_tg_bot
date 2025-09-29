@@ -36,6 +36,7 @@ class Registration(Base):
     goalkeeper = Column(Boolean, default=False, nullable=False)  # Поле для обозначения вратаря
     team_assigned = Column(Boolean, default=False, nullable=False)  # Поле для отметки "Команда назначена"
     paid = Column(Boolean, default=False, nullable=False)  # Поле для отметки "Оплатил тренировку"
+    last_payment_reminder = Column(DateTime, nullable=True)  # Время последнего напоминания об оплате
     
     training = relationship('Training', back_populates='registrations')
 

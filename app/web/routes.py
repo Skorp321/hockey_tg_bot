@@ -44,7 +44,7 @@ def index():
     # Получаем прошедшие тренировки (за последние 30 дней)
     past_trainings = db_session.query(Training)\
         .filter(Training.date_time <= datetime.now())\
-        .filter(Training.date_time >= datetime.now() - timedelta(days=30))\
+        .filter(Training.date_time >= datetime.now() - timedelta(days=7))\
         .order_by(Training.date_time.desc())\
         .all()
     

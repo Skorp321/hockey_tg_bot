@@ -1,7 +1,7 @@
 import asyncio
 import signal
 from app import create_app
-from app.bot.handlers import start_bot
+from app.bot.handlers import start_bot, check_payment_reminders
 from hypercorn.asyncio import serve
 from hypercorn.config import Config as HyperConfig
 
@@ -51,6 +51,26 @@ async def main():
                 print("❌ Не удалось запустить бота после всех попыток")
                 # Продолжаем работу только с веб-сервером
                 bot_app = None
+    
+    # Запускаем фоновую задачу для проверки напоминаний об оплате
+    async def payment_reminder_task():
+        """Фоновая задача для проверки напоминаний об оплате"""
+        while True:
+            try:
+                if bot_app and bot_app.bot:
+                    await check_payment_reminders(bot_app.bot)
+                else:
+                    print("⚠️ Бот не запущен, пропускаем проверку напоминаний")
+            except Exception as e:
+                print(f"❌ Ошибка в фоновой задаче напоминаний: {e}")
+            
+            # Ждем 30 минут до следующей проверки
+            await asyncio.sleep(30 * 60)
+    
+    # Запускаем фоновую задачу
+    if bot_app:
+        asyncio.create_task(payment_reminder_task())
+        print("🔄 Запущена фоновая задача проверки напоминаний об оплате")
     
     # Добавляем обработчики сигналов для корректного завершения
     for sig in (signal.SIGTERM, signal.SIGINT):

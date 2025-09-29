@@ -55,9 +55,8 @@ def handle_telegram_errors(func):
     return wrapper
 
 def get_standard_keyboard():
-    """Создает стандартную клавиатуру с основными кнопками"""
+    """Создает стандартную клавиатуру с основными кнопками (без записи на тренировки)"""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Записаться на ближайшую тренировку", callback_data='register')],
         [InlineKeyboardButton("Показать расписание", callback_data='schedule')],
         [InlineKeyboardButton("Мои записи", callback_data='my_registrations')]
     ])
@@ -82,14 +81,17 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = update.effective_user.id
     
-    # Получаем ближайшую доступную тренировку
+    # Извлекаем ID тренировки из callback_data (формат: register_123)
+    training_id = int(query.data.split('_')[1])
+    
+    # Получаем выбранную тренировку
     training = db_session.query(Training)\
+        .filter(Training.id == training_id)\
         .filter(Training.date_time > datetime.now())\
-        .order_by(Training.date_time)\
         .first()
         
     if not training:
-        await query.answer("Нет доступных тренировок")
+        await query.answer("Тренировка не найдена или уже прошла")
         return
         
     # Проверяем, не записан ли уже пользователь
@@ -193,7 +195,17 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"🕒 {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
         message += f"👥 Участников: {participants}/{training.max_participants}\n\n"
     
-    reply_markup = get_standard_keyboard()
+    # Создаем клавиатуру с кнопками для записи на каждую тренировку (до 5)
+    keyboard = []
+    for training in trainings[:5]:  # Ограничиваем 5 тренировками
+        participants = len(training.registrations)
+        date_str = training.date_time.strftime('%d.%m %H:%M')
+        button_text = f"📅 {date_str} ({participants}/{training.max_participants})"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f'register_{training.id}')])
+    
+    # Добавляем кнопку возврата в меню
+    keyboard.append([InlineKeyboardButton("🔙 Вернуться в меню", callback_data='start')])
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.answer()
     await query.message.reply_text(message, reply_markup=reply_markup)
@@ -203,13 +215,25 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     user_id = update.effective_user.id
     
-    # Получаем все регистрации пользователя на предстоящие тренировки
-    registrations = db_session.query(Registration)\
+    # Получаем предстоящие тренировки
+    upcoming_registrations = db_session.query(Registration)\
         .join(Training)\
         .filter(Registration.user_id == user_id)\
         .filter(Training.date_time > datetime.now())\
         .order_by(Training.date_time)\
         .all()
+    
+    # Получаем прошедшие неоплаченные тренировки
+    past_unpaid_registrations = db_session.query(Registration)\
+        .join(Training)\
+        .filter(Registration.user_id == user_id)\
+        .filter(Training.date_time <= datetime.now())\
+        .filter(Registration.paid == False)\
+        .order_by(Training.date_time)\
+        .all()
+    
+    # Объединяем списки
+    registrations = upcoming_registrations + past_unpaid_registrations
     
     if not registrations:
         await query.answer("У вас нет активных записей")
@@ -218,12 +242,11 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.reply_text(message, reply_markup=reply_markup)
         return
     
-    # Формируем сообщение со списком записей и кнопками отмены для каждой тренировки
+    # Формируем сообщение со списком записей
     message = "🎯 Ваши записи на тренировки:\n\n"
-    keyboard = []
     
-    for reg in registrations:
-        message += f"📅 {reg.training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
+    for i, reg in enumerate(registrations, 1):
+        message += f"{i}. 📅 {reg.training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
         
         # Если команда назначена, показываем полную информацию
         if reg.team_assigned:
@@ -233,9 +256,9 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
                     jersey_info = "⚪"
                 else:
                     jersey_info = "⚫"
-                message += f"👕 {jersey_info}"
+                message += f"   👕 {jersey_info}"
             else:
-                message += f"👕 Футболка не выбрана"
+                message += f"   👕 Футболка не выбрана"
             
             if reg.team_type:
                 if reg.team_type.value == 'first':
@@ -246,33 +269,27 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
             else:
                 message += f" Команда не выбрана\n"
         else:
-            message += f"👕 Команда не назначена\n"
+            message += f"   👕 Команда не назначена\n"
         
         # Добавляем информацию об оплате
         if reg.paid:
-            message += f"💰 Оплачено ✅\n"
+            message += f"   💰 Оплачено ✅\n"
         else:
-            message += f"💰 Не оплачено ❌\n"
+            message += f"   💰 Не оплачено ❌\n"
         
         message += "\n"
-        
-        # Добавляем кнопки для каждой тренировки
-        training_buttons = []
-        
-        # Кнопка отмены записи
-        training_buttons.append(InlineKeyboardButton(
-            f"❌ Отменить запись",
-            callback_data=f'cancel_{reg.id}'
-        ))
-        
-        # Кнопка оплаты (только если не оплачено)
-        if not reg.paid:
-            training_buttons.append(InlineKeyboardButton(
-                f"💰 Оплатил",
-                callback_data=f'pay_{reg.id}'
-            ))
-        
-        keyboard.append(training_buttons)
+    
+    # Создаем компактную клавиатуру с общими действиями
+    keyboard = []
+    
+    # Если есть неоплаченные записи, добавляем кнопку оплаты
+    unpaid_registrations = [reg for reg in registrations if not reg.paid]
+    if unpaid_registrations:
+        keyboard.append([InlineKeyboardButton("💰 Оплатил", callback_data='mark_payment')])
+    
+    # Кнопка отмены записи (показываем только если есть предстоящие тренировки)
+    if upcoming_registrations:
+        keyboard.append([InlineKeyboardButton("❌ Отменить запись", callback_data='cancel_registration')])
     
     # Добавляем кнопку просмотра участников и возврата в главное меню
     keyboard.append([InlineKeyboardButton("👥 Посмотреть участников", callback_data='view_participants')])
@@ -549,11 +566,13 @@ async def start_bot():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("commands", show_commands))
     application.add_handler(CommandHandler("participants", view_participants))
-    application.add_handler(CallbackQueryHandler(register_training, pattern="^register$"))
+    application.add_handler(CallbackQueryHandler(register_training, pattern="^register_\d+$"))
     application.add_handler(CallbackQueryHandler(show_schedule, pattern="^schedule$"))
     application.add_handler(CallbackQueryHandler(show_my_registrations, pattern="^my_registrations$"))
     application.add_handler(CallbackQueryHandler(cancel_registration, pattern="^cancel_\d+$"))
     application.add_handler(CallbackQueryHandler(mark_payment, pattern="^pay_\d+$"))
+    application.add_handler(CallbackQueryHandler(handle_mark_payment, pattern="^mark_payment$"))
+    application.add_handler(CallbackQueryHandler(handle_cancel_registration, pattern="^cancel_registration$"))
     application.add_handler(CallbackQueryHandler(view_training_participants, pattern="^view_participants$"))
     application.add_handler(CallbackQueryHandler(return_to_start, pattern="^start$"))
     
@@ -584,4 +603,179 @@ async def start_bot():
             await application.shutdown()
         except:
             pass
-        raise 
+        raise
+
+# Обработчики для новых кнопок
+async def handle_mark_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик кнопки 'Оплатил'"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Получаем все неоплаченные регистрации пользователя (включая прошедшие)
+    unpaid_registrations = db_session.query(Registration)\
+        .join(Training)\
+        .filter(Registration.user_id == user_id)\
+        .filter(Registration.paid == False)\
+        .order_by(Training.date_time)\
+        .all()
+    
+    if not unpaid_registrations:
+        await query.answer("У вас нет неоплаченных записей")
+        return
+    
+    # Отмечаем самую раннюю по дате неоплаченную тренировку
+    earliest_registration = unpaid_registrations[0]
+    earliest_registration.paid = True
+    db_session.commit()
+    
+    training_date = earliest_registration.training.date_time.strftime('%d.%m.%Y %H:%M')
+    await query.answer(f"✅ Оплата за {training_date} отмечена!")
+    await show_my_registrations(update, context)
+
+async def handle_cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик кнопки 'Отменить запись'"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Получаем все активные регистрации пользователя
+    active_registrations = db_session.query(Registration)\
+        .join(Training)\
+        .filter(Registration.user_id == user_id)\
+        .filter(Training.date_time > datetime.now())\
+        .order_by(Training.date_time)\
+        .all()
+    
+    if not active_registrations:
+        await query.answer("У вас нет активных записей")
+        return
+    
+    # Если только одна запись, отменяем её сразу
+    if len(active_registrations) == 1:
+        registration = active_registrations[0]
+        db_session.delete(registration)
+        db_session.commit()
+        await query.answer("✅ Запись отменена!")
+        await show_my_registrations(update, context)
+        return
+    
+    # Если несколько записей, показываем список для выбора
+    message = "❌ Выберите запись для отмены:\n\n"
+    keyboard = []
+    
+    for i, reg in enumerate(active_registrations, 1):
+        message += f"{i}. 📅 {reg.training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
+        keyboard.append([InlineKeyboardButton(
+            f"❌ Отменить {reg.training.date_time.strftime('%d.%m %H:%M')}",
+            callback_data=f'cancel_{reg.id}'
+        )])
+    
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data='my_registrations')])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.answer()
+    await query.message.reply_text(message, reply_markup=reply_markup)
+
+# Функции для напоминаний об оплате
+async def send_payment_reminder(registration: Registration, training: Training, bot):
+    """Отправляет напоминание об оплате участнику"""
+    try:
+        # Формируем сообщение
+        training_date = training.date_time.strftime('%d.%m.%Y в %H:%M')
+        display_name = registration.display_name or registration.username or 'Участник'
+        
+        message = f"💳 *Напоминание об оплате*\n\n"
+        message += f"Привет, {display_name}!\n\n"
+        message += f"📅 Тренировка: {training_date}\n"
+        message += f"⏰ Прошло уже 1.5 часа с начала тренировки\n"
+        message += f"💰 Пожалуйста, подтвердите оплату тренировки\n\n"
+        message += f"Нажмите кнопку ниже, чтобы отметить оплату:"
+        
+        # Создаем клавиатуру с кнопкой оплаты
+        keyboard = {
+            'inline_keyboard': [
+                [{'text': '✅ Оплатил тренировку', 'callback_data': f'pay_{registration.id}'}],
+                [{'text': '📋 Мои записи', 'callback_data': 'my_registrations'}]
+            ]
+        }
+        
+        # Отправляем сообщение
+        await bot.send_message(
+            chat_id=registration.user_id,
+            text=message,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard['inline_keyboard'])
+        )
+        
+        # Обновляем время последнего напоминания
+        registration.last_payment_reminder = datetime.now()
+        db_session.commit()
+        
+        print(f"✅ Напоминание об оплате отправлено участнику {display_name} (ID: {registration.user_id})")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Ошибка отправки напоминания участнику {registration.user_id}: {e}")
+        return False
+
+async def check_payment_reminders(bot):
+    """Проверяет и отправляет напоминания об оплате"""
+    try:
+        from datetime import timedelta
+        
+        current_time = datetime.now()
+        # Ищем тренировки, которые начались более 1.5 часа назад
+        reminder_time = current_time - timedelta(hours=1, minutes=30)
+        
+        # Находим тренировки, которые начались более 1.5 часа назад
+        trainings_to_check = db_session.query(Training)\
+            .filter(Training.date_time <= reminder_time)\
+            .all()
+        
+        print(f"🔍 Проверка напоминаний об оплате. Найдено тренировок: {len(trainings_to_check)}")
+        
+        # Логируем найденные тренировки
+        for training in trainings_to_check:
+            time_since_start = current_time - training.date_time
+            print(f"   📅 Тренировка {training.id}: {training.date_time.strftime('%d.%m.%Y %H:%M')} (прошло: {time_since_start})")
+        
+        total_reminders_sent = 0
+        
+        for training in trainings_to_check:
+            # Находим неоплативших участников
+            unpaid_registrations = db_session.query(Registration)\
+                .filter(Registration.training_id == training.id)\
+                .filter(Registration.paid == False)\
+                .all()
+            
+            print(f"   👥 Неоплативших участников на тренировке {training.id}: {len(unpaid_registrations)}")
+            
+            for registration in unpaid_registrations:
+                # Проверяем, нужно ли отправлять напоминание
+                should_send_reminder = False
+                
+                if registration.last_payment_reminder is None:
+                    # Первое напоминание
+                    should_send_reminder = True
+                    print(f"      💳 Первое напоминание для участника {registration.user_id}")
+                else:
+                    # Проверяем, прошёл ли час с последнего напоминания
+                    time_since_last_reminder = current_time - registration.last_payment_reminder
+                    if time_since_last_reminder >= timedelta(hours=1):
+                        should_send_reminder = True
+                        print(f"      ⏰ Повторное напоминание для участника {registration.user_id} (прошло: {time_since_last_reminder})")
+                    else:
+                        print(f"      ⏳ Слишком рано для повторного напоминания участнику {registration.user_id} (прошло: {time_since_last_reminder})")
+                
+                if should_send_reminder:
+                    success = await send_payment_reminder(registration, training, bot)
+                    if success:
+                        total_reminders_sent += 1
+        
+        print(f"📊 Итоги отправки напоминаний об оплате:")
+        print(f"✅ Отправлено напоминаний: {total_reminders_sent}")
+        
+        return total_reminders_sent
+        
+    except Exception as e:
+        print(f"❌ Ошибка при проверке напоминаний об оплате: {e}")
+        return 0 

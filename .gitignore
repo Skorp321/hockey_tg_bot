@@ -2,4 +2,8 @@ venv
 training_bot.db
 *.pyc
 .env
+.venv
+app/__pycache__
+app/bot/__pycache__
+app/web/__pycache__
 
