@@ -1,0 +1,109 @@
+name: Manual Deploy & Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Действие для выполнения'
+        required: true
+        type: choice
+        options:
+          - deploy
+          - rollback
+          - restart
+          - logs
+      commit_hash:
+        description: 'Хэш коммита для rollback (опционально)'
+        required: false
+        type: string
+
+jobs:
+  manual-action:
+    name: Execute Manual Action
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        if: inputs.action == 'deploy'
+      
+      - name: Deploy to Production
+        if: inputs.action == 'deploy'
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }}
+            echo "🔄 Deploying to production..."
+            git pull origin main
+            docker-compose down
+            docker-compose build --no-cache
+            docker-compose up -d
+            docker image prune -f
+            echo "✅ Deploy completed!"
+            docker-compose ps
+      
+      - name: Rollback to Previous Version
+        if: inputs.action == 'rollback'
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }}
+            echo "⏪ Rolling back..."
+            
+            # Если указан конкретный коммит
+            if [ -n "${{ inputs.commit_hash }}" ]; then
+              echo "Rolling back to commit: ${{ inputs.commit_hash }}"
+              git reset --hard ${{ inputs.commit_hash }}
+            else
+              # Откатываемся на предыдущий коммит
+              echo "Rolling back to previous commit"
+              git reset --hard HEAD~1
+            fi
+            
+            git log --oneline -5
+            
+            docker-compose down
+            docker-compose build --no-cache
+            docker-compose up -d
+            docker image prune -f
+            echo "✅ Rollback completed!"
+            docker-compose ps
+      
+      - name: Restart Containers
+        if: inputs.action == 'restart'
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }}
+            echo "🔄 Restarting containers..."
+            docker-compose restart
+            echo "✅ Restart completed!"
+            docker-compose ps
+      
+      - name: Show Logs
+        if: inputs.action == 'logs'
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }}
+            echo "📋 Container status:"
+            docker-compose ps
+            echo ""
+            echo "📊 Last 100 log lines:"
+            docker-compose logs --tail=100

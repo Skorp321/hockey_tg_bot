@@ -1,0 +1,59 @@
+name: Health Check
+
+on:
+  schedule:
+    # Проверка каждые 30 минут
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  health-check:
+    name: Check Production Health
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check Application Health
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }}
+            
+            echo "🔍 Checking container status..."
+            docker-compose ps
+            
+            echo ""
+            echo "🏥 Checking application health..."
+            
+            # Проверка health endpoint
+            HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/health)
+            
+            if [ "$HEALTH_STATUS" = "200" ]; then
+              echo "✅ Application is healthy (HTTP $HEALTH_STATUS)"
+            else
+              echo "❌ Application health check failed (HTTP $HEALTH_STATUS)"
+              echo "📋 Recent logs:"
+              docker-compose logs --tail=50 bot
+              exit 1
+            fi
+            
+            echo ""
+            echo "💾 Checking database connection..."
+            docker-compose exec -T db pg_isready -U ${POSTGRES_USER:-user}
+            
+            if [ $? -eq 0 ]; then
+              echo "✅ Database is healthy"
+            else
+              echo "❌ Database connection failed"
+              docker-compose logs --tail=50 db
+              exit 1
+            fi
+      
+      - name: Alert on failure
+        if: failure()
+        run: |
+          echo "❌ Health check failed! Production may be down!"
+          echo "Check the logs immediately."

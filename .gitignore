@@ -2,8 +2,30 @@ venv
 training_bot.db
 *.pyc
 .env
+.env.production
 .venv
 app/__pycache__
 app/bot/__pycache__
 app/web/__pycache__
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Backups
+backups/
+*.sql
+*.sql.gz
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+logs/
 

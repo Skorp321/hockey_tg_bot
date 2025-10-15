@@ -1,0 +1,33 @@
+name: Automated Database Backup
+
+on:
+  schedule:
+    # Запуск каждый день в 3:00 UTC (6:00 по Москве)
+    - cron: '0 3 * * *'
+  workflow_dispatch: # Возможность запустить вручную
+
+jobs:
+  backup:
+    name: Backup Production Database
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Create Database Backup
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }}
+            
+            echo "📦 Creating database backup..."
+            bash scripts/backup-db.sh
+            
+            echo "✅ Backup completed successfully!"
+      
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Database backup failed!"

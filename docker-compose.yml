@@ -4,20 +4,20 @@ services:
     container_name: training_bot
     restart: always
     ports:
-      - "5000:5000"
+      - "${BOT_PORT:-5000}:5000"
     volumes:
       - ./.env:/app/.env
     environment:
-      - TZ=Europe/Moscow
-      - PYTHONUNBUFFERED=1
+      - TZ=${TZ:-Europe/Moscow}
+      - PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-1}
     networks:
       - bot_network
     depends_on:
       db:
         condition: service_healthy
     dns:
-      - 8.8.8.8
-      - 8.8.4.4
+      - ${DNS_PRIMARY:-8.8.8.8}
+      - ${DNS_SECONDARY:-8.8.4.4}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -30,15 +30,15 @@ services:
     container_name: training_bot_db
     restart: always
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=training_bot
+      - POSTGRES_USER=${POSTGRES_USER:-user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-training_bot}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - bot_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d training_bot"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-training_bot}"]
       interval: 5s
       timeout: 5s
       retries: 5
