@@ -3,13 +3,26 @@ from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, App
 from telegram.error import NetworkError, TimedOut, BadRequest
 from datetime import datetime
 import logging
+import re
 from ..models import Training, Registration, UserPreferences, Player
 from ..config import Config
 from ..database import db_session
+from .weekly_posts import start_weekly_post_scheduler, send_weekly_training_post
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def escape_markdown(text):
+    """Экранирует специальные символы Markdown"""
+    if not text:
+        return text
+    # Экранируем специальные символы для обычного Markdown (parse_mode='Markdown')
+    # Для обычного Markdown нужно экранировать: _ * [ ` 
+    special_chars = ['_', '*', '[', '`']
+    for char in special_chars:
+        text = text.replace(char, '\\' + char)
+    return text
 
 def handle_telegram_errors(func):
     """Декоратор для обработки ошибок Telegram API"""
@@ -385,45 +398,45 @@ async def view_training_participants(update: Update, context: ContextTypes.DEFAU
             message += "🥅 *Вратари:*\n"
             for name, jersey_type, paid in goalkeepers:
                 jersey_emoji = "⚪" if jersey_type and jersey_type.value == 'light' else "⚫"
-                message += f"• {name} {jersey_emoji}\n"
+                message += f"• {escape_markdown(name)} {jersey_emoji}\n"
             message += "\n"
         
         # Выводим игроков первой пятерки (светлые)
         if light_first_team:
             message += "⚪ *1-ая пятерка (светлые):*\n"
             for name, paid in light_first_team:
-                message += f"• {name}\n"
+                message += f"• {escape_markdown(name)}\n"
             message += "\n"
         
         # Выводим игроков первой пятерки (темные)
         if dark_first_team:
             message += "⚫ *1-ая пятерка (темные):*\n"
             for name, paid in dark_first_team:
-                message += f"• {name}\n"
+                message += f"• {escape_markdown(name)}\n"
             message += "\n"
         
         # Выводим игроков второй пятерки (светлые)
         if light_second_team:
             message += "⚪ *2-ая пятерка (светлые):*\n"
             for name, paid in light_second_team:
-                message += f"• {name}\n"
+                message += f"• {escape_markdown(name)}\n"
             message += "\n"
         
         # Выводим игроков второй пятерки (темные)
         if dark_second_team:
             message += "⚫ *2-ая пятерка (темные):*\n"
             for name, paid in dark_second_team:
-                message += f"• {name}\n"
+                message += f"• {escape_markdown(name)}\n"
             message += "\n"
         
         # Выводим нераспределенных участников
         if unassigned:
             message += "❓ *Нераспределенные:*\n"
             for name, paid in unassigned:
-                message += f"• {name}\n"
+                message += f"• {escape_markdown(name)}\n"
             message += "\n"
         
-        message += "---\n\n"
+        message += "━━━━━━━━━━━━━━━\n\n"
     
     # Создаем клавиатуру с кнопкой возврата
     keyboard = [
@@ -541,11 +554,34 @@ async def show_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
         admin_commands = """
 👑 Команды администратора:
 
+/test_weekly_post - Отправить тестовый еженедельный пост
 """
         commands += admin_commands
     
     reply_markup = get_standard_keyboard()
     await update.message.reply_text(commands, reply_markup=reply_markup)
+
+@handle_telegram_errors
+async def test_weekly_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для тестирования еженедельного поста (только для администраторов)"""
+    user_id = update.effective_user.id
+    
+    if user_id not in Config.ADMIN_IDS:
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды")
+        return
+    
+    try:
+        # Отправляем тестовый пост
+        success = await send_weekly_training_post(context.bot)
+        
+        if success:
+            await update.message.reply_text("✅ Тестовый еженедельный пост успешно отправлен!")
+        else:
+            await update.message.reply_text("❌ Не удалось отправить тестовый пост. Проверьте настройки CHANNEL_ID и права бота.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при отправке тестового поста: {e}")
+        await update.message.reply_text(f"❌ Ошибка при отправке тестового поста: {e}")
 
 # Добавим новый обработчик для возврата в главное меню
 async def return_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -566,6 +602,7 @@ async def start_bot():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("commands", show_commands))
     application.add_handler(CommandHandler("participants", view_participants))
+    application.add_handler(CommandHandler("test_weekly_post", test_weekly_post))
     application.add_handler(CallbackQueryHandler(register_training, pattern="^register_\d+$"))
     application.add_handler(CallbackQueryHandler(show_schedule, pattern="^schedule$"))
     application.add_handler(CallbackQueryHandler(show_my_registrations, pattern="^my_registrations$"))
@@ -593,6 +630,10 @@ async def start_bot():
         )
         
         print("✅ Telegram бот успешно запущен")
+        
+        # Запускаем планировщик еженедельных постов
+        await start_weekly_post_scheduler(application.bot)
+        
         return application
         
     except Exception as e:
@@ -684,7 +725,7 @@ async def send_payment_reminder(registration: Registration, training: Training, 
         display_name = registration.display_name or registration.username or 'Участник'
         
         message = f"💳 *Напоминание об оплате*\n\n"
-        message += f"Привет, {display_name}!\n\n"
+        message += f"Привет, {escape_markdown(display_name)}!\n\n"
         message += f"📅 Тренировка: {training_date}\n"
         message += f"⏰ Прошло уже 1.5 часа с начала тренировки\n"
         message += f"💰 Пожалуйста, подтвердите оплату тренировки\n\n"

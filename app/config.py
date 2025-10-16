@@ -11,6 +11,10 @@ class Config:
     ADMIN_IDS = [int(id.strip()) for id in os.getenv('ADMIN_IDS', '').split(',') if id.strip()]
     ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
     ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin')
+    
+    # Настройки для еженедельных постов
+    CHANNEL_ID = os.getenv('CHANNEL_ID')  # ID канала или группы для постов
+    WEEKLY_POST_ENABLED = os.getenv('WEEKLY_POST_ENABLED', 'true').lower() == 'true'
 
     # Проверяем наличие токена
     if not TELEGRAM_TOKEN:

@@ -5,6 +5,7 @@ import requests
 from ..models import Training, Registration, JerseyType, TeamType, UserPreferences, Player
 from ..database import db_session
 from ..config import Config
+from ..bot.weekly_posts import send_weekly_training_post
 
 web = Blueprint('web', __name__)
 
@@ -591,3 +592,58 @@ def health_check():
             'error': str(e),
             'timestamp': datetime.now().isoformat()
         }), 503
+
+@web.route('/send-weekly-post', methods=['POST'])
+@login_required
+def send_weekly_post():
+    """Отправляет еженедельный пост о тренировке"""
+    try:
+        # Получаем экземпляр бота из глобального контекста
+        # Это требует доступа к боту, который запущен в основном приложении
+        import asyncio
+        from ..bot.handlers import start_bot
+        
+        # Создаем временный бот для отправки поста
+        async def send_post():
+            try:
+                # Создаем приложение бота
+                from telegram.ext import Application
+                application = Application.builder().token(Config.TELEGRAM_TOKEN).build()
+                await application.initialize()
+                await application.start()
+                
+                # Отправляем пост
+                success = await send_weekly_training_post(application.bot)
+                
+                # Останавливаем приложение
+                await application.stop()
+                await application.shutdown()
+                
+                return success
+            except Exception as e:
+                print(f"Ошибка при отправке поста: {e}")
+                return False
+        
+        # Запускаем асинхронную функцию
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        success = loop.run_until_complete(send_post())
+        loop.close()
+        
+        if success:
+            return jsonify({
+                'success': True, 
+                'message': 'Еженедельный пост успешно отправлен!'
+            })
+        else:
+            return jsonify({
+                'success': False, 
+                'error': 'Не удалось отправить пост. Проверьте настройки CHANNEL_ID и права бота.'
+            }), 500
+            
+    except Exception as e:
+        print(f"Ошибка в send_weekly_post: {e}")
+        return jsonify({
+            'success': False, 
+            'error': f'Ошибка: {str(e)}'
+        }), 500
