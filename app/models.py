@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Boolean
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, ForeignKey, Enum, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 import enum
@@ -27,7 +27,7 @@ class Registration(Base):
     
     id = Column(Integer, primary_key=True)
     training_id = Column(Integer, ForeignKey('trainings.id'), nullable=False)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(BigInteger, nullable=False)
     username = Column(String(100))
     display_name = Column(String(100), nullable=True)  # Отображаемое имя игрока
     registered_at = Column(DateTime, default=datetime.now, nullable=False)
@@ -44,7 +44,7 @@ class Player(Base):
     __tablename__ = 'players'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, nullable=False, unique=True)  # Telegram user ID
+    user_id = Column(BigInteger, nullable=False, unique=True)  # Telegram user ID
     username = Column(String(100), nullable=True)  # Telegram username
     display_name = Column(String(100), nullable=True)  # Отображаемое имя игрока
     goalkeeper = Column(Boolean, default=False, nullable=False)  # Статус вратаря
@@ -58,7 +58,7 @@ class UserPreferences(Base):
     __tablename__ = 'user_preferences'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, nullable=False, unique=True)
+    user_id = Column(BigInteger, nullable=False, unique=True)
     preferred_jersey_type = Column(Enum(JerseyType), nullable=True)  # Предпочтительный цвет майки
     preferred_team_type = Column(Enum(TeamType), nullable=True)  # Предпочтительная команда
     display_name = Column(String(100), nullable=True)  # Последнее переименованное имя пользователя
