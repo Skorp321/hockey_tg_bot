@@ -14,6 +14,7 @@ class Config:
     
     # Настройки для еженедельных постов
     CHANNEL_ID = os.getenv('CHANNEL_ID')  # ID канала или группы для постов
+    MESSAGE_THREAD_ID = os.getenv('MESSAGE_THREAD_ID')  # ID топика (если используется супергруппа с топиками)
     WEEKLY_POST_ENABLED = os.getenv('WEEKLY_POST_ENABLED', 'true').lower() == 'true'
 
     # Проверяем наличие токена

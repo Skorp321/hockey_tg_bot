@@ -34,12 +34,17 @@ async def send_weekly_training_post(bot):
         ])
         
         # Отправляем сообщение в канал/группу
-        await bot.send_message(
-            chat_id=Config.CHANNEL_ID,
-            text=message,
-            message_thread_id=Config.MESSAGE_THREAD_ID,
-            reply_markup=keyboard
-        )
+        send_params = {
+            "chat_id": Config.CHANNEL_ID,
+            "text": message,
+            "reply_markup": keyboard
+        }
+        
+        # Добавляем message_thread_id только если он задан (для топиков в супергруппах)
+        if Config.MESSAGE_THREAD_ID:
+            send_params["message_thread_id"] = int(Config.MESSAGE_THREAD_ID)
+        
+        await bot.send_message(**send_params)
         
         logger.info(f"✅ Еженедельный пост о тренировке отправлен в канал {Config.CHANNEL_ID}")
         return True
