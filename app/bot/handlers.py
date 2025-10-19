@@ -1,6 +1,6 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, Application
-from telegram.error import NetworkError, TimedOut, BadRequest
+from telegram.error import NetworkError, TimedOut, BadRequest, Forbidden
 from datetime import datetime
 import logging
 import re
@@ -761,11 +761,30 @@ async def send_payment_reminder(registration: Registration, training: Training, 
         registration.last_payment_reminder = datetime.now()
         db_session.commit()
         
-        print(f"✅ Напоминание об оплате отправлено участнику {display_name} (ID: {registration.user_id})")
+        logger.info(f"✅ Напоминание об оплате отправлено участнику {display_name} (ID: {registration.user_id})")
         return True
         
+    except Forbidden as e:
+        logger.warning(f"⚠️ Пользователь {registration.user_id} ({display_name}) заблокировал бота. Напоминания не будут отправляться.")
+        # Обновляем время, чтобы не пытаться отправить снова в ближайшее время
+        registration.last_payment_reminder = datetime.now()
+        db_session.commit()
+        return False
+    except BadRequest as e:
+        error_msg = str(e)
+        if "chat not found" in error_msg.lower():
+            logger.warning(f"⚠️ Чат с пользователем {registration.user_id} ({display_name}) не найден. Возможно, пользователь никогда не запускал бота.")
+            # Обновляем время, чтобы не пытаться отправить снова в ближайшее время
+            registration.last_payment_reminder = datetime.now()
+            db_session.commit()
+        else:
+            logger.error(f"❌ Некорректный запрос при отправке напоминания участнику {registration.user_id}: {e}")
+        return False
+    except (NetworkError, TimedOut) as e:
+        logger.error(f"❌ Сетевая ошибка при отправке напоминания участнику {registration.user_id}: {e}")
+        return False
     except Exception as e:
-        print(f"❌ Ошибка отправки напоминания участнику {registration.user_id}: {e}")
+        logger.error(f"❌ Неожиданная ошибка отправки напоминания участнику {registration.user_id}: {e}")
         return False
 
 async def check_payment_reminders(bot):
@@ -782,14 +801,15 @@ async def check_payment_reminders(bot):
             .filter(Training.date_time <= reminder_time)\
             .all()
         
-        print(f"🔍 Проверка напоминаний об оплате. Найдено тренировок: {len(trainings_to_check)}")
+        logger.info(f"🔍 Проверка напоминаний об оплате. Найдено тренировок: {len(trainings_to_check)}")
         
         # Логируем найденные тренировки
         for training in trainings_to_check:
             time_since_start = current_time - training.date_time
-            print(f"   📅 Тренировка {training.id}: {training.date_time.strftime('%d.%m.%Y %H:%M')} (прошло: {time_since_start})")
+            logger.debug(f"   📅 Тренировка {training.id}: {training.date_time.strftime('%d.%m.%Y %H:%M')} (прошло: {time_since_start})")
         
         total_reminders_sent = 0
+        total_blocked_users = 0
         
         for training in trainings_to_check:
             # Находим неоплативших участников (исключая вратарей)
@@ -799,7 +819,7 @@ async def check_payment_reminders(bot):
                 .filter(Registration.goalkeeper == False)\
                 .all()
             
-            print(f"   👥 Неоплативших участников на тренировке {training.id}: {len(unpaid_registrations)}")
+            logger.debug(f"   👥 Неоплативших участников на тренировке {training.id}: {len(unpaid_registrations)}")
             
             for registration in unpaid_registrations:
                 # Проверяем, нужно ли отправлять напоминание
@@ -808,26 +828,26 @@ async def check_payment_reminders(bot):
                 if registration.last_payment_reminder is None:
                     # Первое напоминание
                     should_send_reminder = True
-                    print(f"      💳 Первое напоминание для участника {registration.user_id}")
+                    logger.info(f"      💳 Первое напоминание для участника {registration.user_id}")
                 else:
                     # Проверяем, прошёл ли час с последнего напоминания
                     time_since_last_reminder = current_time - registration.last_payment_reminder
                     if time_since_last_reminder >= timedelta(hours=1):
                         should_send_reminder = True
-                        print(f"      ⏰ Повторное напоминание для участника {registration.user_id} (прошло: {time_since_last_reminder})")
+                        logger.info(f"      ⏰ Повторное напоминание для участника {registration.user_id} (прошло: {time_since_last_reminder})")
                     else:
-                        print(f"      ⏳ Слишком рано для повторного напоминания участнику {registration.user_id} (прошло: {time_since_last_reminder})")
+                        logger.debug(f"      ⏳ Слишком рано для повторного напоминания участнику {registration.user_id} (прошло: {time_since_last_reminder})")
                 
                 if should_send_reminder:
                     success = await send_payment_reminder(registration, training, bot)
                     if success:
                         total_reminders_sent += 1
         
-        print(f"📊 Итоги отправки напоминаний об оплате:")
-        print(f"✅ Отправлено напоминаний: {total_reminders_sent}")
+        logger.info(f"📊 Итоги отправки напоминаний об оплате:")
+        logger.info(f"✅ Отправлено напоминаний: {total_reminders_sent}")
         
         return total_reminders_sent
         
     except Exception as e:
-        print(f"❌ Ошибка при проверке напоминаний об оплате: {e}")
+        logger.error(f"❌ Ошибка при проверке напоминаний об оплате: {e}")
         return 0 
