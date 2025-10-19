@@ -236,12 +236,13 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
         .order_by(Training.date_time)\
         .all()
     
-    # Получаем прошедшие неоплаченные тренировки
+    # Получаем прошедшие неоплаченные тренировки (только для не-вратарей)
     past_unpaid_registrations = db_session.query(Registration)\
         .join(Training)\
         .filter(Registration.user_id == user_id)\
         .filter(Training.date_time <= datetime.now())\
         .filter(Registration.paid == False)\
+        .filter(Registration.goalkeeper == False)\
         .order_by(Training.date_time)\
         .all()
     
@@ -284,19 +285,22 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             message += f"   👕 Команда не назначена\n"
         
-        # Добавляем информацию об оплате
-        if reg.paid:
-            message += f"   💰 Оплачено ✅\n"
+        # Добавляем информацию об оплате (только для не-вратарей)
+        if not reg.goalkeeper:
+            if reg.paid:
+                message += f"   💰 Оплачено ✅\n"
+            else:
+                message += f"   💰 Не оплачено ❌\n"
         else:
-            message += f"   💰 Не оплачено ❌\n"
+            message += f"   🥅 Вратарь\n"
         
         message += "\n"
     
     # Создаем компактную клавиатуру с общими действиями
     keyboard = []
     
-    # Если есть неоплаченные записи, добавляем кнопку оплаты
-    unpaid_registrations = [reg for reg in registrations if not reg.paid]
+    # Если есть неоплаченные записи (не вратари), добавляем кнопку оплаты
+    unpaid_registrations = [reg for reg in registrations if not reg.paid and not reg.goalkeeper]
     if unpaid_registrations:
         keyboard.append([InlineKeyboardButton("💰 Оплатил", callback_data='mark_payment')])
     
@@ -652,11 +656,12 @@ async def handle_mark_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     user_id = update.effective_user.id
     
-    # Получаем все неоплаченные регистрации пользователя (включая прошедшие)
+    # Получаем все неоплаченные регистрации пользователя (исключая вратарей)
     unpaid_registrations = db_session.query(Registration)\
         .join(Training)\
         .filter(Registration.user_id == user_id)\
         .filter(Registration.paid == False)\
+        .filter(Registration.goalkeeper == False)\
         .order_by(Training.date_time)\
         .all()
     
@@ -720,6 +725,11 @@ async def handle_cancel_registration(update: Update, context: ContextTypes.DEFAU
 async def send_payment_reminder(registration: Registration, training: Training, bot):
     """Отправляет напоминание об оплате участнику"""
     try:
+        # Пропускаем вратарей - им не нужны напоминания об оплате
+        if registration.goalkeeper:
+            logger.info(f"Пропускаем напоминание для вратаря {registration.user_id}")
+            return False
+        
         # Формируем сообщение
         training_date = training.date_time.strftime('%d.%m.%Y в %H:%M')
         display_name = registration.display_name or registration.username or 'Участник'
@@ -782,10 +792,11 @@ async def check_payment_reminders(bot):
         total_reminders_sent = 0
         
         for training in trainings_to_check:
-            # Находим неоплативших участников
+            # Находим неоплативших участников (исключая вратарей)
             unpaid_registrations = db_session.query(Registration)\
                 .filter(Registration.training_id == training.id)\
                 .filter(Registration.paid == False)\
+                .filter(Registration.goalkeeper == False)\
                 .all()
             
             print(f"   👥 Неоплативших участников на тренировке {training.id}: {len(unpaid_registrations)}")
