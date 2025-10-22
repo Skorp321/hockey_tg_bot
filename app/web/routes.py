@@ -70,7 +70,7 @@ def add_training():
         
         return jsonify({'success': True})
     except Exception as e:
-        print(f"Error adding training: {e}")
+        logger.error(f"Error adding training: {e}")
         db_session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 400
 
@@ -178,7 +178,7 @@ def save_jerseys(training_id):
         return jsonify({'success': True, 'message': 'Майки и команды сохранены в базе данных'})
         
     except Exception as e:
-        print(f"Error saving jerseys: {e}")
+        logger.error(f"Error saving jerseys: {e}")
         db_session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -234,19 +234,19 @@ def send_notifications(training_id):
                     
                     if telegram_response.status_code == 200:
                         success_count += 1
-                        print(f"✅ Уведомление отправлено участнику {display_name} ({registration.jersey_type.value})")
+                        logger.info(f"✅ Уведомление отправлено участнику {display_name} ({registration.jersey_type.value})")
                     else:
                         failed_count += 1
-                        print(f"❌ Ошибка отправки участнику {display_name}: {telegram_response.text}")
+                        logger.error(f"❌ Ошибка отправки участнику {display_name}: {telegram_response.text}")
                         
                 except Exception as e:
                     failed_count += 1
-                    print(f"❌ Ошибка отправки участнику {display_name}: {e}")
+                    logger.error(f"❌ Ошибка отправки участнику {display_name}: {e}")
         
         # Логируем общий результат
-        print(f"📊 Итоги отправки уведомлений для тренировки {training_id}")
-        print(f"✅ Успешно отправлено: {success_count}")
-        print(f"❌ Ошибок отправки: {failed_count}")
+        logger.info(f"📊 Итоги отправки уведомлений для тренировки {training_id}")
+        logger.info(f"✅ Успешно отправлено: {success_count}")
+        logger.info(f"❌ Ошибок отправки: {failed_count}")
         
         if success_count > 0:
             return jsonify({
@@ -260,7 +260,7 @@ def send_notifications(training_id):
             })
         
     except Exception as e:
-        print(f"Error sending notifications: {e}")
+        logger.error(f"Error sending notifications: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @web.route('/training/<int:training_id>/quick-add-players')
@@ -273,11 +273,11 @@ def get_quick_add_players(training_id):
         
         # Получаем ID участников, уже записанных на текущую тренировку
         current_participant_ids = [reg.user_id for reg in training.registrations]
-        print(f"Current participants on training {training_id}: {current_participant_ids}")
+        logger.info(f"Current participants on training {training_id}: {current_participant_ids}")
         
         # Получаем всех игроков из таблицы players
         all_players = db_session.query(Player).all()
-        print(f"Total players in database: {len(all_players)}")
+        logger.info(f"Total players in database: {len(all_players)}")
         
         # Фильтруем игроков, которые не записаны на текущую тренировку
         available_players = []
@@ -303,7 +303,7 @@ def get_quick_add_players(training_id):
                 
                 available_players.append(player_data)
         
-        print(f"Available players for quick add: {len(available_players)}")
+        logger.info(f"Available players for quick add: {len(available_players)}")
         
         # Сортируем по последней дате регистрации (новые сверху)
         available_players.sort(key=lambda x: datetime.strptime(x['last_registration'], '%d.%m.%Y %H:%M'), reverse=True)
@@ -320,7 +320,7 @@ def get_quick_add_players(training_id):
         })
         
     except Exception as e:
-        print(f"Error getting quick add players: {e}")
+        logger.error(f"Error getting quick add players: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -418,7 +418,124 @@ def bulk_register_players(training_id):
         })
         
     except Exception as e:
-        print(f"Error bulk registering players: {e}")
+        logger.error(f"Error bulk registering players: {e}")
+        db_session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@web.route('/search-telegram-user', methods=['POST'])
+@login_required
+def search_telegram_user():
+    """Ищет пользователя в Telegram по username"""
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip().replace('@', '')
+        
+        if not username:
+            return jsonify({'success': False, 'error': 'Username не указан'}), 400
+        
+        # Сначала проверяем, есть ли пользователь в нашей базе
+        existing_player = db_session.query(Player).filter_by(username=username).first()
+        if existing_player:
+            return jsonify({
+                'success': True,
+                'user': {
+                    'user_id': existing_player.user_id,
+                    'username': existing_player.username,
+                    'display_name': existing_player.display_name,
+                    'first_name': existing_player.display_name or existing_player.username,
+                    'goalkeeper': existing_player.goalkeeper
+                },
+                'found_in_db': True
+            })
+        
+        # Если пользователя нет в базе, возвращаем возможность добавить его вручную
+        # Для этого создаем временный user_id на основе username
+        # При добавлении реального игрока через бота, этот user_id будет обновлен
+        return jsonify({
+            'success': True,
+            'user': {
+                'user_id': None,  # Будет заполнен при первой регистрации через бота
+                'username': username,
+                'display_name': None,
+                'first_name': username,
+                'goalkeeper': False
+            },
+            'found_in_db': False,
+            'warning': 'Пользователь не найден в базе. Вы можете добавить его, но для получения уведомлений он должен будет написать боту.'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error searching telegram user: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@web.route('/add-player-by-username', methods=['POST'])
+@login_required
+def add_player_by_username():
+    """Добавляет игрока по username или display_name напрямую в базу"""
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip().replace('@', '')
+        display_name = data.get('display_name', '').strip()
+        goalkeeper = data.get('goalkeeper', False)
+        
+        # Проверяем, что указан хотя бы один из параметров
+        if not username and not display_name:
+            return jsonify({'success': False, 'error': 'Необходимо указать либо Telegram логин, либо имя игрока'}), 400
+        
+        # Если есть username, проверяем, есть ли уже такой пользователь в базе
+        if username:
+            existing_player = db_session.query(Player).filter_by(username=username).first()
+            if existing_player:
+                return jsonify({
+                    'success': True,
+                    'user': {
+                        'user_id': existing_player.user_id,
+                        'username': existing_player.username,
+                        'display_name': existing_player.display_name,
+                        'goalkeeper': existing_player.goalkeeper
+                    },
+                    'message': 'Пользователь уже есть в базе'
+                })
+        
+        # Создаем нового игрока с временным user_id
+        # Используем отрицательный hash от username (если есть) или display_name как временный user_id
+        identifier = username if username else display_name
+        temp_user_id = -abs(hash(identifier + str(datetime.now().timestamp())) % (10 ** 10))
+        
+        # Проверяем, что такой user_id еще не существует (маловероятно, но на всякий случай)
+        while db_session.query(Player).filter_by(user_id=temp_user_id).first():
+            temp_user_id = -abs(hash(identifier + str(datetime.now().timestamp()) + str(temp_user_id)) % (10 ** 10))
+        
+        new_player = Player(
+            user_id=temp_user_id,
+            username=username if username else None,
+            display_name=display_name if display_name else username,
+            goalkeeper=goalkeeper,
+            first_registration=datetime.now(),
+            last_registration=datetime.now(),
+            total_registrations=0
+        )
+        
+        db_session.add(new_player)
+        db_session.commit()
+        
+        return jsonify({
+            'success': True,
+            'user': {
+                'user_id': temp_user_id,
+                'username': username if username else None,
+                'display_name': display_name if display_name else username,
+                'goalkeeper': goalkeeper
+            },
+            'message': 'Игрок добавлен в базу'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error adding player by username: {e}")
+        import traceback
+        traceback.print_exc()
         db_session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -449,7 +566,7 @@ def remove_participant(training_id, participant_id):
         })
         
     except Exception as e:
-        print(f"Error removing participant: {e}")
+        logger.error(f"Error removing participant: {e}")
         db_session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -505,7 +622,7 @@ def rename_participant(training_id, participant_id):
         })
         
     except Exception as e:
-        print(f"Error renaming participant: {e}")
+        logger.error(f"Error renaming participant: {e}")
         db_session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -537,7 +654,7 @@ def assign_team(training_id, participant_id):
         })
         
     except Exception as e:
-        print(f"Error assigning team: {e}")
+        logger.error(f"Error assigning team: {e}")
         db_session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -556,6 +673,10 @@ def mark_participant_paid(training_id, participant_id):
         if not registration:
             return jsonify({'success': False, 'error': 'Participant not found'}), 404
         
+        # Проверяем, что это не вратарь
+        if registration.goalkeeper:
+            return jsonify({'success': False, 'error': 'Goalkeeper payment is not tracked'}), 400
+        
         # Устанавливаем флаг оплаты
         registration.paid = True
         
@@ -569,7 +690,7 @@ def mark_participant_paid(training_id, participant_id):
         })
         
     except Exception as e:
-        print(f"Error marking participant as paid: {e}")
+        logger.error(f"Error marking participant as paid: {e}")
         db_session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -621,7 +742,7 @@ def send_weekly_post():
                 
                 return success
             except Exception as e:
-                print(f"Ошибка при отправке поста: {e}")
+                logger.error(f"Ошибка при отправке поста: {e}")
                 return False
         
         # Запускаем асинхронную функцию
@@ -642,7 +763,7 @@ def send_weekly_post():
             }), 500
             
     except Exception as e:
-        print(f"Ошибка в send_weekly_post: {e}")
+        logger.error(f"Ошибка в send_weekly_post: {e}")
         return jsonify({
             'success': False, 
             'error': f'Ошибка: {str(e)}'

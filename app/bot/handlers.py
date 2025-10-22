@@ -81,8 +81,80 @@ def get_info_keyboard():
         [InlineKeyboardButton("Мои записи", callback_data='my_registrations')]
     ])
 
+def update_temporary_user_id(real_user_id, username):
+    """
+    Обновляет временный user_id на реальный, когда пользователь впервые взаимодействует с ботом.
+    Временные user_id - это отрицательные числа, созданные на основе hash от username.
+    """
+    if not username:
+        return
+    
+    try:
+        # Ищем игрока с таким же username и отрицательным (временным) user_id
+        temp_player = db_session.query(Player)\
+            .filter(Player.username == username)\
+            .filter(Player.user_id < 0)\
+            .first()
+        
+        if temp_player:
+            logger.info(f"Найден временный игрок с username={username}, обновляем user_id с {temp_player.user_id} на {real_user_id}")
+            
+            # Обновляем все регистрации этого игрока
+            registrations = db_session.query(Registration)\
+                .filter_by(user_id=temp_player.user_id)\
+                .all()
+            
+            for reg in registrations:
+                reg.user_id = real_user_id
+                logger.info(f"Обновлена регистрация {reg.id} на тренировку {reg.training_id}")
+            
+            # Обновляем предпочтения пользователя, если есть
+            temp_prefs = db_session.query(UserPreferences)\
+                .filter_by(user_id=temp_player.user_id)\
+                .first()
+            
+            if temp_prefs:
+                # Проверяем, нет ли уже предпочтений с реальным user_id
+                real_prefs = db_session.query(UserPreferences)\
+                    .filter_by(user_id=real_user_id)\
+                    .first()
+                
+                if not real_prefs:
+                    temp_prefs.user_id = real_user_id
+                else:
+                    # Если есть, удаляем временные предпочтения
+                    db_session.delete(temp_prefs)
+            
+            # Проверяем, нет ли уже игрока с реальным user_id
+            real_player = db_session.query(Player)\
+                .filter_by(user_id=real_user_id)\
+                .first()
+            
+            if not real_player:
+                # Обновляем user_id временного игрока
+                temp_player.user_id = real_user_id
+            else:
+                # Если есть, объединяем данные и удаляем временного игрока
+                real_player.total_registrations += temp_player.total_registrations
+                if temp_player.first_registration < real_player.first_registration:
+                    real_player.first_registration = temp_player.first_registration
+                db_session.delete(temp_player)
+            
+            db_session.commit()
+            logger.info(f"Успешно обновлен user_id для игрока {username}")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении временного user_id: {e}")
+        db_session.rollback()
+
 @handle_telegram_errors
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Обновляем временный user_id на реальный, если необходимо
+    user_id = update.effective_user.id
+    username = update.effective_user.username
+    if username:
+        update_temporary_user_id(user_id, username)
+    
     reply_markup = get_standard_keyboard()
     await update.message.reply_text(
         'Добро пожаловать! Выберите действие:',
@@ -93,6 +165,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = update.effective_user.id
+    username = update.effective_user.username
+    
+    # Обновляем временный user_id на реальный, если необходимо
+    if username:
+        update_temporary_user_id(user_id, username)
     
     # Извлекаем ID тренировки из callback_data (формат: register_123)
     training_id = int(query.data.split('_')[1])
@@ -188,6 +265,12 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
+    # Обновляем временный user_id на реальный, если необходимо
+    user_id = update.effective_user.id
+    username = update.effective_user.username
+    if username:
+        update_temporary_user_id(user_id, username)
+    
     # Получаем все предстоящие тренировки
     trainings = db_session.query(Training)\
         .filter(Training.date_time > datetime.now())\
@@ -227,6 +310,11 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = update.effective_user.id
+    username = update.effective_user.username
+    
+    # Обновляем временный user_id на реальный, если необходимо
+    if username:
+        update_temporary_user_id(user_id, username)
     
     # Получаем предстоящие тренировки
     upcoming_registrations = db_session.query(Registration)\

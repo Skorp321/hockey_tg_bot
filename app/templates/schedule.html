@@ -46,8 +46,9 @@
                         <td class="text-start">{{ training.date_time.strftime('%d.%m.%Y %H:%M') }}</td>
                         <td class="text-center">{{ training.registrations|length }}/{{ training.max_participants }}</td>
                         <td class="text-center">
-                            {% set paid_count = training.registrations|selectattr('paid')|list|length %}
-                            {% set total_count = training.registrations|length %}
+                            {% set non_goalkeeper_regs = training.registrations|rejectattr('goalkeeper')|list %}
+                            {% set paid_count = non_goalkeeper_regs|selectattr('paid')|list|length %}
+                            {% set total_count = non_goalkeeper_regs|length %}
                             {% if total_count > 0 and paid_count == total_count %}
                                 <span class="badge bg-success">✅ Все оплатили</span>
                             {% elif total_count > 0 %}
@@ -91,7 +92,6 @@
                                                 <th>Вратарь</th>
                                                 <th class="text-center">Светлая</th>
                                                 <th class="text-center">Темная</th>
-                                                <th class="text-center">Оплатил</th>
                                                 <th class="text-center">Действия</th>
                                             </tr>
                                         </thead>
@@ -169,13 +169,13 @@
                         <td class="text-start">{{ training.date_time.strftime('%d.%m.%Y %H:%M') }}</td>
                         <td class="text-center">{{ training.registrations|length }}/{{ training.max_participants }}</td>
                         <td class="text-center">
-                            {% set paid_count = training.registrations|selectattr('paid')|list|length %}
+                            {% set non_goalkeeper_regs = training.registrations|rejectattr('goalkeeper')|list %}
+                            {% set paid_count = non_goalkeeper_regs|selectattr('paid')|list|length %}
+                            {% set total_count = non_goalkeeper_regs|length %}
                             <span class="badge bg-success">{{ paid_count }} оплатили</span>
-                            <span class="badge bg-warning">{{ training.registrations|length - paid_count }} не оплатили</span>
+                            <span class="badge bg-warning">{{ total_count - paid_count }} не оплатили</span>
                         </td>
                         <td class="text-center">
-                            {% set paid_count = training.registrations|selectattr('paid')|list|length %}
-                            {% set total_count = training.registrations|length %}
                             {% if total_count > 0 and paid_count == total_count %}
                                 <span class="badge bg-success">✅ Все оплатили</span>
                             {% elif total_count > 0 %}
@@ -255,6 +255,42 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
+                <!-- Форма поиска по username -->
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6 class="card-title">Добавить нового игрока</h6>
+                        <div class="row g-2">
+                            <div class="col-md-5">
+                                <input type="text" class="form-control" id="searchUsername" 
+                                       placeholder="@username (опционально)"
+                                       onkeypress="if(event.key === 'Enter') addPlayerByUsername()">
+                            </div>
+                            <div class="col-md-4">
+                                <input type="text" class="form-control" id="searchDisplayName" 
+                                       placeholder="Имя для отображения"
+                                       onkeypress="if(event.key === 'Enter') addPlayerByUsername()">
+                            </div>
+                            <div class="col-md-3">
+                                <button type="button" class="btn btn-success w-100" onclick="addPlayerByUsername()">
+                                    ➕ Добавить
+                                </button>
+                            </div>
+                        </div>
+                        <small class="text-muted">Укажите Telegram логин и/или имя игрока</small>
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="searchGoalkeeperCheckbox">
+                            <label class="form-check-label" for="searchGoalkeeperCheckbox">
+                                Вратарь
+                            </label>
+                        </div>
+                        <div id="searchResult" class="mt-2"></div>
+                    </div>
+                </div>
+                
+                <hr>
+                
+                <!-- Список существующих игроков -->
+                <h6>Выберите из существующих игроков:</h6>
                 <div id="quickAddContent">
                     <div class="text-center">
                         <div class="spinner-border" role="status">
@@ -486,11 +522,6 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                         <img src="/static/black_tshirt.svg" alt="Темная майка" class="jersey-icon">
                     </label>
                 </div>
-            </td>
-            <td class="text-center">
-                <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">
-                    ${participant.paid ? '✓' : '✗'}
-                </span>
             </td>
             <td class="text-center">
                 <button class="btn btn-sm btn-outline-danger" 
@@ -1023,6 +1054,12 @@ function showQuickAddModal(trainingId) {
     // Сохраняем ID тренировки для использования в других функциях
     window.currentTrainingId = trainingId;
     
+    // Очищаем поля ввода и результаты
+    document.getElementById('searchUsername').value = '';
+    document.getElementById('searchDisplayName').value = '';
+    document.getElementById('searchGoalkeeperCheckbox').checked = false;
+    document.getElementById('searchResult').innerHTML = '';
+    
     // Показываем модальное окно
     const modal = new bootstrap.Modal(document.getElementById('quickAddModal'));
     modal.show();
@@ -1125,6 +1162,88 @@ function removeParticipant(trainingId, participantId, participantName) {
     }
 }
 
+// Функция для добавления игрока по username или имени
+function addPlayerByUsername() {
+    const usernameInput = document.getElementById('searchUsername');
+    const displayNameInput = document.getElementById('searchDisplayName');
+    const goalkeeperCheckbox = document.getElementById('searchGoalkeeperCheckbox');
+    const searchResult = document.getElementById('searchResult');
+    const trainingId = window.currentTrainingId;
+    
+    const username = usernameInput.value.trim();
+    const displayName = displayNameInput.value.trim();
+    const goalkeeper = goalkeeperCheckbox.checked;
+    
+    // Проверяем, что указан хотя бы один из параметров
+    if (!username && !displayName) {
+        searchResult.innerHTML = '<div class="alert alert-warning">Пожалуйста, введите Telegram логин и/или имя игрока</div>';
+        return;
+    }
+    
+    searchResult.innerHTML = '<div class="text-center"><span class="spinner-border spinner-border-sm"></span> Добавление...</div>';
+    
+    // Сначала ищем или добавляем пользователя в базу
+    fetch('/add-player-by-username', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            username: username,
+            display_name: displayName,
+            goalkeeper: goalkeeper
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Теперь добавляем игрока на тренировку
+            const player = {
+                user_id: data.user.user_id,
+                username: data.user.username || '',
+                display_name: data.user.display_name,
+                goalkeeper: data.user.goalkeeper
+            };
+            
+            return fetch(`/training/${trainingId}/bulk-register`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    players: [player]
+                })
+            });
+        } else {
+            throw new Error(data.error || 'Ошибка при добавлении игрока');
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            searchResult.innerHTML = '<div class="alert alert-success">✅ Игрок успешно добавлен!</div>';
+            
+            // Очищаем поля
+            usernameInput.value = '';
+            displayNameInput.value = '';
+            goalkeeperCheckbox.checked = false;
+            
+            // Через 1.5 секунды закрываем модальное окно и перезагружаем страницу
+            setTimeout(() => {
+                const modal = bootstrap.Modal.getInstance(document.getElementById('quickAddModal'));
+                modal.hide();
+                location.reload();
+            }, 1500);
+        } else {
+            searchResult.innerHTML = '<div class="alert alert-danger">❌ ' + (data.error || 'Ошибка при добавлении') + '</div>';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        searchResult.innerHTML = '<div class="alert alert-danger">❌ ' + error.message + '</div>';
+    });
+}
+
 // Функция для добавления выбранных игроков
 function addSelectedPlayers() {
     const checkboxes = document.querySelectorAll('.player-checkbox:checked');
@@ -1221,11 +1340,9 @@ function loadPastParticipants(trainingId) {
                 if (goalkeepers.length > 0) {
                     html += '<div class="col-md-6 mb-3"><h6>🥅 Вратари</h6><ul class="list-group">';
                     goalkeepers.forEach(participant => {
-                        const paidStatus = participant.paid ? '✅' : '❌';
                         const jerseyEmoji = participant.jersey_type === 'light' ? '⚪' : '⚫';
-                        html += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                        html += `<li class="list-group-item">
                             ${participant.name} ${jerseyEmoji}
-                            <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">${paidStatus}</span>
                         </li>`;
                     });
                     html += '</ul></div>';
