@@ -14,6 +14,10 @@ class TeamType(enum.Enum):
     FIRST = "first"
     SECOND = "second"
 
+class PositionType(enum.Enum):
+    FORWARD = "forward"  # Нап
+    DEFENDER = "defender"  # Зщ
+
 class Training(Base):
     __tablename__ = 'trainings'
     
@@ -33,6 +37,7 @@ class Registration(Base):
     registered_at = Column(DateTime, default=datetime.now, nullable=False)
     jersey_type = Column(Enum(JerseyType), nullable=True)  # Новое поле для типа майки
     team_type = Column(Enum(TeamType), nullable=True)  # Новое поле для выбора команды
+    position_type = Column(Enum(PositionType), nullable=True)  # Поле для амплуа (Нап/Зщ)
     goalkeeper = Column(Boolean, default=False, nullable=False)  # Поле для обозначения вратаря
     team_assigned = Column(Boolean, default=False, nullable=False)  # Поле для отметки "Команда назначена"
     paid = Column(Boolean, default=False, nullable=False)  # Поле для отметки "Оплатил тренировку"
@@ -61,6 +66,7 @@ class UserPreferences(Base):
     user_id = Column(BigInteger, nullable=False, unique=True)
     preferred_jersey_type = Column(Enum(JerseyType), nullable=True)  # Предпочтительный цвет майки
     preferred_team_type = Column(Enum(TeamType), nullable=True)  # Предпочтительная команда
+    preferred_position_type = Column(Enum(PositionType), nullable=True)  # Предпочтительное амплуа
     display_name = Column(String(100), nullable=True)  # Последнее переименованное имя пользователя
     goalkeeper = Column(Boolean, default=False, nullable=False)  # Предпочтение быть вратарем
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False) 

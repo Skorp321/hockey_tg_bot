@@ -59,17 +59,17 @@
                         </td>
                         <td class="text-center">
                             <div class="btn-group" role="group">
-                                <button class="btn btn-sm btn-success" onclick="showQuickAddModal({{ training.id }})" title="Быстрое добавление">
+                                <button class="btn btn-sm btn-success" onclick='showQuickAddModal({{ training.id }})' title="Быстрое добавление">
                                     ➕
                                 </button>
-                                <button class="btn btn-sm btn-info" onclick="toggleParticipants({{ training.id }})" title="Участники">
+                                <button class="btn btn-sm btn-info" onclick='toggleParticipants({{ training.id }})' title="Участники">
                                     👥
                                 </button>
                                 <button class="btn btn-sm btn-warning" id="rename-btn-{{ training.id }}" 
-                                        onclick="showRenameModal({{ training.id }})" disabled title="Переименовать">
+                                        onclick='showRenameModal({{ training.id }})' disabled title="Переименовать">
                                     ✏️
                                 </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteTraining({{ training.id }})" title="Удалить">
+                                <button class="btn btn-sm btn-danger" onclick='deleteTraining({{ training.id }})' title="Удалить">
                                     🗑️
                                 </button>
                             </div>
@@ -90,8 +90,7 @@
                                         <thead>
                                             <tr>
                                                 <th>Вратарь</th>
-                                                <th class="text-center">Светлая</th>
-                                                <th class="text-center">Темная</th>
+                                                <th class="text-center">Цвет джерси</th>
                                                 <th class="text-center">Действия</th>
                                             </tr>
                                         </thead>
@@ -109,10 +108,9 @@
                                         <thead>
                                             <tr>
                                                 <th>Участник</th>
-                                                <th class="text-center">Светлая</th>
-                                                <th class="text-center">Темная</th>
-                                                <th class="text-center">1-ая</th>
-                                                <th class="text-center">2-ая</th>
+                                                <th class="text-center">Цвет джерси</th>
+                                                <th class="text-center">Звено</th>
+                                                <th class="text-center">Амплуа</th>
                                                 <th class="text-center">Оплатил</th>
                                                 <th class="text-center">Действия</th>
                                             </tr>
@@ -136,7 +134,7 @@
                             <!-- Общая кнопка распределения на команды -->
                             <div class="text-center mt-3" id="distribute-button-container-{{ training.id }}" style="display: none;">
                                 <button class="btn btn-secondary btn-lg" id="distribute-teams-{{ training.id }}" 
-                                        onclick="distributeTeams({{ training.id }})" disabled>
+                                        onclick='distributeTeams({{ training.id }})' disabled>
                                     🏒 Распределить на команды
                                 </button>
                             </div>
@@ -186,10 +184,10 @@
                         </td>
                         <td class="text-center">
                             <div class="btn-group" role="group">
-                                <button class="btn btn-sm btn-info" onclick="togglePastParticipants({{ training.id }})" title="Участники">
+                                <button class="btn btn-sm btn-info" onclick='togglePastParticipants({{ training.id }})' title="Участники">
                                     👥
                                 </button>
-                                <button class="btn btn-sm btn-secondary" onclick="viewPastTrainingStats({{ training.id }})" title="Статистика">
+                                <button class="btn btn-sm btn-secondary" onclick='viewPastTrainingStats({{ training.id }})' title="Статистика">
                                     📊
                                 </button>
                             </div>
@@ -495,35 +493,35 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                 </div>
             </td>
             <td class="text-center">
-                <div class="form-check d-flex justify-content-center">
-                    <input class="form-check-input" type="radio" 
-                           name="jersey-type-${trainingId}-${participant.name}" 
-                           id="light-${trainingId}-${index}" 
-                           value="light" 
-                           data-participant="${participant.name}"
-                           data-participant-id="${participant.id}"
-                           ${lightChecked}
-                           data-saved-jersey="${savedJerseyType}"
-                           onchange="checkSelectionChanges(${trainingId})">
-                    <label class="form-check-label ms-2" for="light-${trainingId}-${index}">
-                        <img src="/static/white_tshirt.svg" alt="Светлая майка" class="jersey-icon">
-                    </label>
-                </div>
-            </td>
-            <td class="text-center">
-                <div class="form-check d-flex justify-content-center">
-                    <input class="form-check-input" type="radio" 
-                           name="jersey-type-${trainingId}-${participant.name}" 
-                           id="dark-${trainingId}-${index}" 
-                           value="dark" 
-                           data-participant="${participant.name}"
-                           data-participant-id="${participant.id}"
-                           ${darkChecked}
-                           data-saved-jersey="${savedJerseyType}"
-                           onchange="checkSelectionChanges(${trainingId})">
-                    <label class="form-check-label ms-2" for="dark-${trainingId}-${index}">
-                        <img src="/static/black_tshirt.svg" alt="Темная майка" class="jersey-icon">
-                    </label>
+                <div class="d-flex flex-column align-items-center gap-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" 
+                               name="jersey-type-${trainingId}-${participant.name}" 
+                               id="light-${trainingId}-${index}" 
+                               value="light" 
+                               data-participant="${participant.name}"
+                               data-participant-id="${participant.id}"
+                               ${lightChecked}
+                               data-saved-jersey="${savedJerseyType}"
+                               onchange="checkSelectionChanges(${trainingId})">
+                        <label class="form-check-label ms-1" for="light-${trainingId}-${index}">
+                            <img src="/static/white_tshirt.svg" alt="Светлая майка" class="jersey-icon">
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" 
+                               name="jersey-type-${trainingId}-${participant.name}" 
+                               id="dark-${trainingId}-${index}" 
+                               value="dark" 
+                               data-participant="${participant.name}"
+                               data-participant-id="${participant.id}"
+                               ${darkChecked}
+                               data-saved-jersey="${savedJerseyType}"
+                               onchange="checkSelectionChanges(${trainingId})">
+                        <label class="form-check-label ms-1" for="dark-${trainingId}-${index}">
+                            <img src="/static/black_tshirt.svg" alt="Темная майка" class="jersey-icon">
+                        </label>
+                    </div>
                 </div>
             </td>
             <td class="text-center">
@@ -535,10 +533,13 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
             </td>
         `;
     } else {
-        // Создаем строку для полевого игрока (майки + команды)
+        // Создаем строку для полевого игрока (майки + команды + амплуа)
         const firstChecked = participant.team_type === 'first' ? 'checked' : '';
         const secondChecked = participant.team_type === 'second' ? 'checked' : '';
         const savedTeamType = participant.team_type || '';
+        const forwardChecked = participant.position_type === 'forward' ? 'checked' : '';
+        const defenderChecked = participant.position_type === 'defender' ? 'checked' : '';
+        const savedPositionType = participant.position_type || '';
         
         row.innerHTML = `
             <td onclick="selectParticipant(${trainingId}, this.parentElement)" style="cursor: pointer;" data-username="${participant.username || ''}" data-goalkeeper="${participant.goalkeeper || false}">
@@ -552,67 +553,99 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                 </div>
             </td>
             <td class="text-center">
-                <div class="form-check d-flex justify-content-center">
-                    <input class="form-check-input" type="radio" 
-                           name="jersey-type-${trainingId}-${participant.name}" 
-                           id="light-${trainingId}-${index}" 
-                           value="light" 
-                           data-participant="${participant.name}"
-                           data-participant-id="${participant.id}"
-                           ${lightChecked}
-                           data-saved-jersey="${savedJerseyType}"
-                           onchange="checkSelectionChanges(${trainingId})">
-                    <label class="form-check-label ms-2" for="light-${trainingId}-${index}">
-                        <img src="/static/white_tshirt.svg" alt="Светлая майка" class="jersey-icon">
-                    </label>
+                <div class="d-flex flex-column align-items-center gap-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" 
+                               name="jersey-type-${trainingId}-${participant.name}" 
+                               id="light-${trainingId}-${index}" 
+                               value="light" 
+                               data-participant="${participant.name}"
+                               data-participant-id="${participant.id}"
+                               ${lightChecked}
+                               data-saved-jersey="${savedJerseyType}"
+                               onchange="checkSelectionChanges(${trainingId})">
+                        <label class="form-check-label ms-1" for="light-${trainingId}-${index}">
+                            <img src="/static/white_tshirt.svg" alt="Светлая майка" class="jersey-icon">
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" 
+                               name="jersey-type-${trainingId}-${participant.name}" 
+                               id="dark-${trainingId}-${index}" 
+                               value="dark" 
+                               data-participant="${participant.name}"
+                               data-participant-id="${participant.id}"
+                               ${darkChecked}
+                               data-saved-jersey="${savedJerseyType}"
+                               onchange="checkSelectionChanges(${trainingId})">
+                        <label class="form-check-label ms-1" for="dark-${trainingId}-${index}">
+                            <img src="/static/black_tshirt.svg" alt="Темная майка" class="jersey-icon">
+                        </label>
+                    </div>
                 </div>
             </td>
             <td class="text-center">
-                <div class="form-check d-flex justify-content-center">
-                    <input class="form-check-input" type="radio" 
-                           name="jersey-type-${trainingId}-${participant.name}" 
-                           id="dark-${trainingId}-${index}" 
-                           value="dark" 
-                           data-participant="${participant.name}"
-                           data-participant-id="${participant.id}"
-                           ${darkChecked}
-                           data-saved-jersey="${savedJerseyType}"
-                           onchange="checkSelectionChanges(${trainingId})">
-                    <label class="form-check-label ms-2" for="dark-${trainingId}-${index}">
-                        <img src="/static/black_tshirt.svg" alt="Темная майка" class="jersey-icon">
-                    </label>
+                <div class="d-flex flex-column align-items-center gap-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" 
+                               name="team-type-${trainingId}-${participant.name}" 
+                               id="first-${trainingId}-${index}" 
+                               value="first" 
+                               data-participant="${participant.name}"
+                               data-participant-id="${participant.id}"
+                               ${firstChecked}
+                               data-saved-team="${savedTeamType}"
+                               onchange="checkSelectionChanges(${trainingId})">
+                        <label class="form-check-label ms-1" for="first-${trainingId}-${index}">
+                            1️⃣
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" 
+                               name="team-type-${trainingId}-${participant.name}" 
+                               id="second-${trainingId}-${index}" 
+                               value="second" 
+                               data-participant="${participant.name}"
+                               data-participant-id="${participant.id}"
+                               ${secondChecked}
+                               data-saved-team="${savedTeamType}"
+                               onchange="checkSelectionChanges(${trainingId})">
+                        <label class="form-check-label ms-1" for="second-${trainingId}-${index}">
+                            2️⃣
+                        </label>
+                    </div>
                 </div>
             </td>
             <td class="text-center">
-                <div class="form-check d-flex justify-content-center">
-                    <input class="form-check-input" type="radio" 
-                           name="team-type-${trainingId}-${participant.name}" 
-                           id="first-${trainingId}-${index}" 
-                           value="first" 
-                           data-participant="${participant.name}"
-                           data-participant-id="${participant.id}"
-                           ${firstChecked}
-                           data-saved-team="${savedTeamType}"
-                           onchange="checkSelectionChanges(${trainingId})">
-                    <label class="form-check-label ms-2" for="first-${trainingId}-${index}">
-                        1️⃣
-                    </label>
-                </div>
-            </td>
-            <td class="text-center">
-                <div class="form-check d-flex justify-content-center">
-                    <input class="form-check-input" type="radio" 
-                           name="team-type-${trainingId}-${participant.name}" 
-                           id="second-${trainingId}-${index}" 
-                           value="second" 
-                           data-participant="${participant.name}"
-                           data-participant-id="${participant.id}"
-                           ${secondChecked}
-                           data-saved-team="${savedTeamType}"
-                           onchange="checkSelectionChanges(${trainingId})">
-                    <label class="form-check-label ms-2" for="second-${trainingId}-${index}">
-                        2️⃣
-                    </label>
+                <div class="d-flex flex-column align-items-center gap-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" 
+                               name="position-type-${trainingId}-${participant.name}" 
+                               id="forward-${trainingId}-${index}" 
+                               value="forward" 
+                               data-participant="${participant.name}"
+                               data-participant-id="${participant.id}"
+                               ${forwardChecked}
+                               data-saved-position="${savedPositionType}"
+                               onchange="checkSelectionChanges(${trainingId})">
+                        <label class="form-check-label ms-1" for="forward-${trainingId}-${index}">
+                            Нап
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" 
+                               name="position-type-${trainingId}-${participant.name}" 
+                               id="defender-${trainingId}-${index}" 
+                               value="defender" 
+                               data-participant="${participant.name}"
+                               data-participant-id="${participant.id}"
+                               ${defenderChecked}
+                               data-saved-position="${savedPositionType}"
+                               onchange="checkSelectionChanges(${trainingId})">
+                        <label class="form-check-label ms-1" for="defender-${trainingId}-${index}">
+                            Зщ
+                        </label>
+                    </div>
                 </div>
             </td>
             <td class="text-center">
@@ -646,6 +679,7 @@ function checkSelectionChanges(trainingId) {
     
     let allJerseysSelected = true;
     let allTeamsSelected = true;
+    let allPositionsSelected = true;
     let hasChanges = false;
     const participantSelections = {};
     const changedParticipants = [];
@@ -653,21 +687,25 @@ function checkSelectionChanges(trainingId) {
     // Если есть только вратари (нет полевых игроков), то команды проверять не нужно
     const hasFieldPlayers = participantRows.length > 0;
     
-    // Проверяем обычных участников
-    participantRows.forEach((row, index) => {
-        const lightRadio = row.querySelector(`input[id="light-${trainingId}-${index}"]`);
-        const darkRadio = row.querySelector(`input[id="dark-${trainingId}-${index}"]`);
-        const firstRadio = row.querySelector(`input[id="first-${trainingId}-${index}"]`);
-        const secondRadio = row.querySelector(`input[id="second-${trainingId}-${index}"]`);
-        const participantName = lightRadio ? lightRadio.getAttribute('data-participant') : 'Unknown';
+        // Проверяем обычных участников
+        participantRows.forEach((row, index) => {
+            const lightRadio = row.querySelector(`input[id="light-${trainingId}-${index}"]`);
+            const darkRadio = row.querySelector(`input[id="dark-${trainingId}-${index}"]`);
+            const firstRadio = row.querySelector(`input[id="first-${trainingId}-${index}"]`);
+            const secondRadio = row.querySelector(`input[id="second-${trainingId}-${index}"]`);
+            const forwardRadio = row.querySelector(`input[id="forward-${trainingId}-${index}"]`);
+            const defenderRadio = row.querySelector(`input[id="defender-${trainingId}-${index}"]`);
+            const participantName = lightRadio ? lightRadio.getAttribute('data-participant') : 'Unknown';
         
         
         // Получаем сохраненные значения из атрибутов data
         const savedJerseyType = lightRadio ? lightRadio.getAttribute('data-saved-jersey') : '';
         const savedTeamType = firstRadio ? firstRadio.getAttribute('data-saved-team') : '';
+        const savedPositionType = forwardRadio ? forwardRadio.getAttribute('data-saved-position') : '';
         
         let jerseySelected = false;
         let teamSelected = false;
+        let positionSelected = false;
         let participantChanged = false;
         
         // Проверяем выбор майки
@@ -702,8 +740,26 @@ function checkSelectionChanges(trainingId) {
             }
         }
         
+        // Проверяем выбор амплуа для полевых игроков
+        if (forwardRadio && defenderRadio) {
+            if (forwardRadio.checked) {
+                participantSelections[participantName].position = 'forward';
+                positionSelected = true;
+                if (savedPositionType !== 'forward') {
+                    participantChanged = true;
+                }
+            } else if (defenderRadio.checked) {
+                participantSelections[participantName].position = 'defender';
+                positionSelected = true;
+                if (savedPositionType !== 'defender') {
+                    participantChanged = true;
+                }
+            }
+        }
+        
         if (!jerseySelected) allJerseysSelected = false;
         if (!teamSelected) allTeamsSelected = false;
+        if (!positionSelected) allPositionsSelected = false;
         if (participantChanged) {
             hasChanges = true;
             changedParticipants.push(participantName);
@@ -746,8 +802,8 @@ function checkSelectionChanges(trainingId) {
     });
     
     // Активируем общую кнопку распределения
-    // Кнопка активна если все майки выбраны И (нет полевых игроков ИЛИ у всех полевых игроков выбраны команды)
-    const canDistribute = allJerseysSelected && (!hasFieldPlayers || allTeamsSelected);
+    // Кнопка активна если все майки выбраны И (нет полевых игроков ИЛИ у всех полевых игроков выбраны команды и амплуа)
+    const canDistribute = allJerseysSelected && (!hasFieldPlayers || (allTeamsSelected && allPositionsSelected));
     
     console.log(`allJerseysSelected: ${allJerseysSelected}, allTeamsSelected: ${allTeamsSelected}, hasFieldPlayers: ${hasFieldPlayers}, canDistribute: ${canDistribute}`);
     
@@ -875,6 +931,15 @@ function distributeTeams(trainingId) {
                         firstRadio.setAttribute('data-saved-team', 'first');
                     } else if (secondRadio && secondRadio.checked) {
                         secondRadio.setAttribute('data-saved-team', 'second');
+                    }
+                    
+                    const forwardRadio = row.querySelector(`input[id="forward-${trainingId}-${index}"]`);
+                    const defenderRadio = row.querySelector(`input[id="defender-${trainingId}-${index}"]`);
+                    
+                    if (forwardRadio && forwardRadio.checked) {
+                        forwardRadio.setAttribute('data-saved-position', 'forward');
+                    } else if (defenderRadio && defenderRadio.checked) {
+                        defenderRadio.setAttribute('data-saved-position', 'defender');
                     }
                 });
             }

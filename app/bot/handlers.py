@@ -4,7 +4,7 @@ from telegram.error import NetworkError, TimedOut, BadRequest, Forbidden
 from datetime import datetime
 import logging
 import re
-from ..models import Training, Registration, UserPreferences, Player
+from ..models import Training, Registration, UserPreferences, Player, PositionType
 from ..config import Config
 from ..database import db_session
 from .weekly_posts import start_weekly_post_scheduler, send_weekly_training_post
@@ -367,7 +367,17 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
                     team_info = "1️⃣"
                 else:
                     team_info = "2️⃣"
-                message += f" {team_info}\n"
+                message += f" {team_info}"
+                
+                # Добавляем информацию об амплуа для полевых игроков
+                if not reg.goalkeeper and reg.position_type:
+                    if reg.position_type.value == 'forward':
+                        position_info = " - Нап"
+                    else:
+                        position_info = " - Зщ"
+                    message += f"{position_info}"
+                
+                message += "\n"
             else:
                 message += f" Команда не выбрана\n"
         else:
@@ -474,14 +484,22 @@ async def view_training_participants(update: Update, context: ContextTypes.DEFAU
             if reg.goalkeeper:
                 goalkeepers.append((display_name, reg.jersey_type, reg.paid))
             elif reg.team_assigned and reg.jersey_type and reg.team_type:
+                # Добавляем информацию об амплуа для полевых игроков
+                position_info = ""
+                if reg.position_type:
+                    if reg.position_type.value == 'forward':
+                        position_info = " - Нап"
+                    else:
+                        position_info = " - Зщ"
+                
                 if reg.jersey_type.value == 'light' and reg.team_type.value == 'first':
-                    light_first_team.append((display_name, reg.paid))
+                    light_first_team.append((display_name, reg.paid, position_info))
                 elif reg.jersey_type.value == 'dark' and reg.team_type.value == 'first':
-                    dark_first_team.append((display_name, reg.paid))
+                    dark_first_team.append((display_name, reg.paid, position_info))
                 elif reg.jersey_type.value == 'light' and reg.team_type.value == 'second':
-                    light_second_team.append((display_name, reg.paid))
+                    light_second_team.append((display_name, reg.paid, position_info))
                 elif reg.jersey_type.value == 'dark' and reg.team_type.value == 'second':
-                    dark_second_team.append((display_name, reg.paid))
+                    dark_second_team.append((display_name, reg.paid, position_info))
             else:
                 unassigned.append((display_name, reg.paid))
         
@@ -496,29 +514,29 @@ async def view_training_participants(update: Update, context: ContextTypes.DEFAU
         # Выводим игроков первой пятерки (светлые)
         if light_first_team:
             message += "⚪ *1-ая пятерка (светлые):*\n"
-            for name, paid in light_first_team:
-                message += f"• {escape_markdown(name)}\n"
+            for name, paid, position_info in light_first_team:
+                message += f"• {escape_markdown(name)}{position_info}\n"
             message += "\n"
         
         # Выводим игроков первой пятерки (темные)
         if dark_first_team:
             message += "⚫ *1-ая пятерка (темные):*\n"
-            for name, paid in dark_first_team:
-                message += f"• {escape_markdown(name)}\n"
+            for name, paid, position_info in dark_first_team:
+                message += f"• {escape_markdown(name)}{position_info}\n"
             message += "\n"
         
         # Выводим игроков второй пятерки (светлые)
         if light_second_team:
             message += "⚪ *2-ая пятерка (светлые):*\n"
-            for name, paid in light_second_team:
-                message += f"• {escape_markdown(name)}\n"
+            for name, paid, position_info in light_second_team:
+                message += f"• {escape_markdown(name)}{position_info}\n"
             message += "\n"
         
         # Выводим игроков второй пятерки (темные)
         if dark_second_team:
             message += "⚫ *2-ая пятерка (темные):*\n"
-            for name, paid in dark_second_team:
-                message += f"• {escape_markdown(name)}\n"
+            for name, paid, position_info in dark_second_team:
+                message += f"• {escape_markdown(name)}{position_info}\n"
             message += "\n"
         
         # Выводим нераспределенных участников
@@ -614,7 +632,17 @@ async def view_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         team_info = "1️⃣"
                     else:
                         team_info = "2️⃣"
-                    message += f" {team_info}\n"
+                    message += f" {team_info}"
+                    
+                    # Добавляем информацию об амплуа для полевых игроков
+                    if not reg.goalkeeper and reg.position_type:
+                        if reg.position_type.value == 'forward':
+                            position_info = " - Нап"
+                        else:
+                            position_info = " - Зщ"
+                        message += f"{position_info}"
+                    
+                    message += "\n"
                 else:
                     message += "\n"
             else:
