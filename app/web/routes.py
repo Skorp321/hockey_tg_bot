@@ -2,10 +2,13 @@ from flask import Blueprint, render_template, request, jsonify, redirect, url_fo
 from datetime import datetime, timedelta
 from functools import wraps
 import requests
+import logging
 from ..models import Training, Registration, JerseyType, TeamType, UserPreferences, Player
 from ..database import db_session
 from ..config import Config
 from ..bot.weekly_posts import send_weekly_training_post
+
+logger = logging.getLogger(__name__)
 
 web = Blueprint('web', __name__)
 

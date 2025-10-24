@@ -355,6 +355,7 @@ function deleteTraining(trainingId) {
     if (confirm('Вы уверены, что хотите удалить эту тренировку?')) {
         fetch(`/training/${trainingId}`, {
             method: 'DELETE',
+            credentials: 'include'
         })
         .then(response => response.json())
         .then(data => {
@@ -394,7 +395,9 @@ function loadParticipants(trainingId) {
     const goalkeepersTable = document.getElementById(`goalkeepers-table-${trainingId}`);
     const goalkeepersTbody = document.getElementById(`goalkeepers-tbody-${trainingId}`);
     
-    fetch(`/training/${trainingId}/participants`)
+    fetch(`/training/${trainingId}/participants`, {
+        credentials: 'include'
+    })
         .then(response => response.json())
         .then(data => {
             if (data.participants.length > 0) {
@@ -810,6 +813,7 @@ function distributeTeams(trainingId) {
         headers: {
             'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
             participant_selections: participantSelections
         })
@@ -831,6 +835,7 @@ function distributeTeams(trainingId) {
                     headers: {
                         'Content-Type': 'application/json',
                     },
+                    credentials: 'include',
                     body: JSON.stringify({
                         changed_participants: allParticipantNames
                     })
@@ -919,6 +924,7 @@ document.getElementById('addTrainingForm').addEventListener('submit', function(e
     
     fetch('/training', {
         method: 'POST',
+        credentials: 'include',
         body: formData
     })
     .then(response => response.json())
@@ -1026,6 +1032,7 @@ document.getElementById('renameParticipantForm').addEventListener('submit', func
         headers: {
             'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
             name: newName,
             goalkeeper: isGoalkeeper
@@ -1072,7 +1079,9 @@ function showQuickAddModal(trainingId) {
 function loadQuickAddPlayers(trainingId) {
     const content = document.getElementById('quickAddContent');
     
-    fetch(`/training/${trainingId}/quick-add-players`)
+    fetch(`/training/${trainingId}/quick-add-players`, {
+        credentials: 'include'
+    })
         .then(response => response.json())
         .then(data => {
             console.log('Quick add players response:', data);
@@ -1145,6 +1154,7 @@ function removeParticipant(trainingId, participantId, participantName) {
     if (confirm(`Вы уверены, что хотите удалить ${participantName} из тренировки?`)) {
         fetch(`/training/${trainingId}/participant/${participantId}`, {
             method: 'DELETE',
+            credentials: 'include'
         })
         .then(response => response.json())
         .then(data => {
@@ -1188,6 +1198,7 @@ function addPlayerByUsername() {
         headers: {
             'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
             username: username,
             display_name: displayName,
@@ -1210,6 +1221,7 @@ function addPlayerByUsername() {
                 headers: {
                     'Content-Type': 'application/json',
                 },
+                credentials: 'include',
                 body: JSON.stringify({
                     players: [player]
                 })
@@ -1271,6 +1283,7 @@ function addSelectedPlayers() {
         headers: {
             'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
             players: selectedPlayers
         })
@@ -1322,7 +1335,9 @@ function togglePastParticipants(trainingId) {
 function loadPastParticipants(trainingId) {
     const participantsContent = document.getElementById(`past-participants-content-${trainingId}`);
     
-    fetch(`/training/${trainingId}/participants`)
+    fetch(`/training/${trainingId}/participants`, {
+        credentials: 'include'
+    })
         .then(response => response.json())
         .then(data => {
             if (data.participants.length > 0) {
@@ -1445,7 +1460,8 @@ function sendWeeklyPost() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-            }
+            },
+            credentials: 'include'
         })
         .then(response => response.json())
         .then(data => {
