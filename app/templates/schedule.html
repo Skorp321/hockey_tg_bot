@@ -230,14 +230,22 @@
             <div class="modal-body">
                 <form id="addTrainingForm" method="POST">
                     <div class="mb-3">
-                        <label for="date_time" class="form-label">Дата и время</label>
-                        <input type="datetime-local" class="form-control" id="date_time" name="date_time" required>
+                        <label for="training_date" class="form-label">Дата</label>
+                        <input type="date" class="form-control" id="training_date" name="training_date" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="training_time" class="form-label">Время (24-часовой формат)</label>
+                        <input type="time" class="form-control" id="training_time" name="training_time" step="60" required>
+                        <small class="form-text text-muted">Формат: ЧЧ:ММ (например: 19:30)</small>
                     </div>
                     <div class="mb-3">
                         <label for="max_participants" class="form-label">Максимум участников</label>
-                        <input type="number" class="form-control" id="max_participants" name="max_participants" value="10" min="1" required>
+                        <input type="number" class="form-control" id="max_participants" name="max_participants" value="22" min="1" required>
                     </div>
-                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                    <div class="d-flex justify-content-end gap-2">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                        <button type="submit" class="btn btn-primary">Сохранить</button>
+                    </div>
                 </form>
             </div>
         </div>
@@ -984,7 +992,19 @@ function distributeTeams(trainingId) {
 document.getElementById('addTrainingForm').addEventListener('submit', function(e) {
     e.preventDefault();
     
-    const formData = new FormData(this);
+    // Объединяем дату и время в один параметр
+    const date = document.getElementById('training_date').value;
+    const time = document.getElementById('training_time').value;
+    
+    if (!date || !time) {
+        alert('Пожалуйста, заполните дату и время');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('date_time', date + 'T' + time);
+    formData.append('max_participants', document.getElementById('max_participants').value);
+    
     const modal = bootstrap.Modal.getInstance(document.getElementById('addTrainingModal'));
     
     fetch('/training', {
@@ -1433,9 +1453,13 @@ function loadPastParticipants(trainingId) {
                     html += '<div class="col-md-6 mb-3"><h6>⚪ 1-ая пятерка (светлые)</h6><ul class="list-group">';
                     lightFirst.forEach(participant => {
                         const paidStatus = participant.paid ? '✅' : '❌';
+                        const paidButton = participant.paid ? '' : `<button class="btn btn-sm btn-success ms-2" onclick="markParticipantPaid(${trainingId}, ${participant.id}, '${participant.name}')" title="Отметить как оплатившего">Оплатил</button>`;
                         html += `<li class="list-group-item d-flex justify-content-between align-items-center">
                             ${participant.name}
-                            <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">${paidStatus}</span>
+                            <div class="d-flex align-items-center">
+                                <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">${paidStatus}</span>
+                                ${paidButton}
+                            </div>
                         </li>`;
                     });
                     html += '</ul></div>';
@@ -1445,9 +1469,13 @@ function loadPastParticipants(trainingId) {
                     html += '<div class="col-md-6 mb-3"><h6>⚫ 1-ая пятерка (темные)</h6><ul class="list-group">';
                     darkFirst.forEach(participant => {
                         const paidStatus = participant.paid ? '✅' : '❌';
+                        const paidButton = participant.paid ? '' : `<button class="btn btn-sm btn-success ms-2" onclick="markParticipantPaid(${trainingId}, ${participant.id}, '${participant.name}')" title="Отметить как оплатившего">Оплатил</button>`;
                         html += `<li class="list-group-item d-flex justify-content-between align-items-center">
                             ${participant.name}
-                            <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">${paidStatus}</span>
+                            <div class="d-flex align-items-center">
+                                <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">${paidStatus}</span>
+                                ${paidButton}
+                            </div>
                         </li>`;
                     });
                     html += '</ul></div>';
@@ -1457,9 +1485,13 @@ function loadPastParticipants(trainingId) {
                     html += '<div class="col-md-6 mb-3"><h6>⚪ 2-ая пятерка (светлые)</h6><ul class="list-group">';
                     lightSecond.forEach(participant => {
                         const paidStatus = participant.paid ? '✅' : '❌';
+                        const paidButton = participant.paid ? '' : `<button class="btn btn-sm btn-success ms-2" onclick="markParticipantPaid(${trainingId}, ${participant.id}, '${participant.name}')" title="Отметить как оплатившего">Оплатил</button>`;
                         html += `<li class="list-group-item d-flex justify-content-between align-items-center">
                             ${participant.name}
-                            <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">${paidStatus}</span>
+                            <div class="d-flex align-items-center">
+                                <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">${paidStatus}</span>
+                                ${paidButton}
+                            </div>
                         </li>`;
                     });
                     html += '</ul></div>';
@@ -1469,9 +1501,13 @@ function loadPastParticipants(trainingId) {
                     html += '<div class="col-md-6 mb-3"><h6>⚫ 2-ая пятерка (темные)</h6><ul class="list-group">';
                     darkSecond.forEach(participant => {
                         const paidStatus = participant.paid ? '✅' : '❌';
+                        const paidButton = participant.paid ? '' : `<button class="btn btn-sm btn-success ms-2" onclick="markParticipantPaid(${trainingId}, ${participant.id}, '${participant.name}')" title="Отметить как оплатившего">Оплатил</button>`;
                         html += `<li class="list-group-item d-flex justify-content-between align-items-center">
                             ${participant.name}
-                            <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">${paidStatus}</span>
+                            <div class="d-flex align-items-center">
+                                <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">${paidStatus}</span>
+                                ${paidButton}
+                            </div>
                         </li>`;
                     });
                     html += '</ul></div>';
@@ -1481,9 +1517,13 @@ function loadPastParticipants(trainingId) {
                     html += '<div class="col-md-6 mb-3"><h6>❓ Нераспределенные</h6><ul class="list-group">';
                     unassigned.forEach(participant => {
                         const paidStatus = participant.paid ? '✅' : '❌';
+                        const paidButton = participant.paid ? '' : `<button class="btn btn-sm btn-success ms-2" onclick="markParticipantPaid(${trainingId}, ${participant.id}, '${participant.name}')" title="Отметить как оплатившего">Оплатил</button>`;
                         html += `<li class="list-group-item d-flex justify-content-between align-items-center">
                             ${participant.name}
-                            <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">${paidStatus}</span>
+                            <div class="d-flex align-items-center">
+                                <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">${paidStatus}</span>
+                                ${paidButton}
+                            </div>
                         </li>`;
                     });
                     html += '</ul></div>';
@@ -1507,6 +1547,76 @@ function viewPastTrainingStats(trainingId) {
     alert('Функция статистики будет добавлена в следующих версиях');
 }
 
+// Функция для обновления статистики в таблице прошедших тренировок
+function updatePastTrainingStats(trainingId) {
+    fetch(`/training/${trainingId}/participants`, {
+        credentials: 'include'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.participants) {
+            // Подсчитываем статистику оплаты
+            const nonGoalkeeperRegs = data.participants.filter(p => !p.goalkeeper);
+            const paidCount = nonGoalkeeperRegs.filter(p => p.paid).length;
+            const totalCount = nonGoalkeeperRegs.length;
+            
+            // Находим строку тренировки в таблице прошедших тренировок
+            const trainingRows = document.querySelectorAll('#past-trainings tr');
+            trainingRows.forEach(row => {
+                const firstCell = row.querySelector('td');
+                if (firstCell && firstCell.textContent.includes(data.training_date)) {
+                    // Обновляем статистику
+                    const statsCell = row.cells[2]; // Колонка "Статистика"
+                    if (statsCell) {
+                        statsCell.innerHTML = `
+                            <span class="badge bg-success">${paidCount} оплатили</span>
+                            <span class="badge bg-warning">${totalCount - paidCount} не оплатили</span>
+                        `;
+                    }
+                    
+                    // Обновляем статус
+                    const statusCell = row.cells[3]; // Колонка "Статус"
+                    if (statusCell) {
+                        if (totalCount > 0 && paidCount == totalCount) {
+                            statusCell.innerHTML = '<span class="badge bg-success">✅ Все оплатили</span>';
+                        } else if (totalCount > 0) {
+                            statusCell.innerHTML = '<span class="badge bg-warning">⏳ Есть неоплаченные</span>';
+                        } else {
+                            statusCell.innerHTML = '<span class="badge bg-secondary">📝 Нет участников</span>';
+                        }
+                    }
+                }
+            });
+        }
+    })
+    .catch(error => {
+        console.error('Error updating stats:', error);
+    });
+}
+
+// Функция для отметки участника как оплатившего
+function markParticipantPaid(trainingId, participantId, participantName) {
+    fetch(`/training/${trainingId}/participant/${participantId}/mark-paid`, {
+        method: 'POST',
+        credentials: 'include'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Перезагружаем список участников для обновления статуса
+            loadPastParticipants(trainingId);
+            // Обновляем статистику в основной таблице прошедших тренировок
+            updatePastTrainingStats(trainingId);
+        } else {
+            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Ошибка при обновлении статуса оплаты');
+    });
+}
+
 // Автоматически загружаем участников для всех тренировок при загрузке страницы
 document.addEventListener('DOMContentLoaded', function() {
     // Получаем все ID тренировок из таблицы будущих тренировок
@@ -1516,6 +1626,34 @@ document.addEventListener('DOMContentLoaded', function() {
         // Загружаем участников для каждой тренировки
         loadParticipants(trainingId);
     });
+    
+    // Настраиваем поле времени для 24-часового формата
+    const timeInput = document.getElementById('training_time');
+    if (timeInput) {
+        // Устанавливаем атрибуты для принуждения к 24-часовому формату
+        timeInput.setAttribute('step', '60');
+        
+        // Добавляем обработчик для проверки формата
+        timeInput.addEventListener('input', function() {
+            const value = this.value;
+            if (value) {
+                // Проверяем, что время в правильном формате (HH:MM)
+                const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+                if (!timeRegex.test(value)) {
+                    this.setCustomValidity('Пожалуйста, введите время в формате ЧЧ:ММ (например: 19:30)');
+                } else {
+                    this.setCustomValidity('');
+                }
+            }
+        });
+        
+        // Добавляем подсказку при фокусе
+        timeInput.addEventListener('focus', function() {
+            if (!this.value) {
+                this.placeholder = '19:30';
+            }
+        });
+    }
 });
 
 // Функция для отправки еженедельного поста
@@ -1658,6 +1796,33 @@ tr.selected:hover {
 .btn-warning:disabled {
     background-color: #6c757d;
     border-color: #6c757d;
+}
+
+/* Стили для модального окна добавления тренировки */
+.modal-footer .btn {
+    min-width: 80px;
+}
+
+.gap-2 > * + * {
+    margin-left: 0.5rem;
+}
+
+/* Стили для поля времени */
+#training_time {
+    font-family: 'Courier New', monospace;
+    font-size: 1.1em;
+    letter-spacing: 0.1em;
+}
+
+#training_time:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+.form-text {
+    font-size: 0.875em;
+    color: #6c757d;
+    margin-top: 0.25rem;
 }
 </style>
 {% endblock %} 

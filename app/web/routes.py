@@ -227,7 +227,7 @@ def send_notifications(training_id):
                     message += f"👥 Ваша пятерка: {team_emoji}\n"
                     if registration.position_type:
                         position_text = "Нап" if registration.position_type.value == 'forward' else "Зщ"
-                        message += f"⚽ Ваше амплуа: {position_text}\n"
+                        message += f"🏒 Ваше амплуа: {position_text}\n"
                 
                 message += f"👥 Всего участников: {len(training.registrations)}/{training.max_participants}"
                 
