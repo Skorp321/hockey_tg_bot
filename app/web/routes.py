@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 import requests
 import logging
-from ..models import Training, Registration, JerseyType, TeamType, PositionType, UserPreferences, Player
+from ..models import Training, Registration, JerseyType, TeamType, PositionType, UserPreferences, Player, TeamAssignment
 from ..database import db_session
 from ..config import Config
 from ..bot.weekly_posts import send_weekly_training_post
@@ -97,6 +97,13 @@ def get_participants(training_id):
     for reg in training.registrations:
         # Используем display_name если есть, иначе username
         display_name = reg.display_name or reg.username or 'Без имени'
+        
+        # Получаем статус team_assigned из таблицы TeamAssignment
+        team_assignment = db_session.query(TeamAssignment)\
+            .filter_by(training_id=training_id, user_id=reg.user_id)\
+            .first()
+        team_assigned = team_assignment.team_assigned if team_assignment else False
+        
         participants.append({
             'id': reg.id,
             'user_id': reg.user_id,
@@ -108,7 +115,7 @@ def get_participants(training_id):
             'team_type': reg.team_type.value if reg.team_type else None,
             'position_type': reg.position_type.value if reg.position_type else None,
             'goalkeeper': reg.goalkeeper,
-            'team_assigned': reg.team_assigned,
+            'team_assigned': team_assigned,
             'paid': reg.paid
         })
     
@@ -152,37 +159,41 @@ def save_jerseys(training_id):
                 if 'position' in selection and selection['position'] in ['forward', 'defender']:
                     registration.position_type = PositionType(selection['position'])
                 
-                # Устанавливаем флаг назначения команды
+                # Устанавливаем флаг назначения команды в таблице TeamAssignment
                 # Для вратарей: достаточно выбрать майку
                 # Для полевых игроков: нужно выбрать и майку, и команду, и амплуа
+                
+                # Получаем или создаем запись в team_assignments
+                team_assignment = db_session.query(TeamAssignment)\
+                    .filter_by(training_id=training_id, user_id=registration.user_id)\
+                    .first()
+                
+                if not team_assignment:
+                    team_assignment = TeamAssignment(
+                        training_id=training_id,
+                        user_id=registration.user_id,
+                        team_assigned=False,
+                        assigned_at=None
+                    )
+                    db_session.add(team_assignment)
+                
                 if registration.goalkeeper:
                     if 'jersey' in selection and selection['jersey'] in ['light', 'dark']:
-                        registration.team_assigned = True
+                        logger.info(f"✅ Параметры сохранены для вратаря {display_name}")
                 else:
-                    if ('jersey' in selection and selection['jersey'] in ['light', 'dark'] and 
-                        'team' in selection and selection['team'] in ['first', 'second'] and
-                        'position' in selection and selection['position'] in ['forward', 'defender']):
-                        registration.team_assigned = True
+                    has_jersey = 'jersey' in selection and selection['jersey'] in ['light', 'dark']
+                    has_team = 'team' in selection and selection['team'] in ['first', 'second']
+                    has_position = 'position' in selection and selection['position'] in ['forward', 'defender']
+                    
+                    logger.info(f"🔍 Проверка для полевого игрока {display_name}: jersey={has_jersey}, team={has_team}, position={has_position}")
+                    
+                    if has_jersey and has_team and has_position:
+                        logger.info(f"✅ Параметры сохранены для полевого игрока {display_name}")
+                    else:
+                        logger.warning(f"⚠️ НЕ все параметры выбраны для {display_name}")
         
-        # Сохраняем предпочтения пользователей для будущих тренировок
-        for registration in training.registrations:
-            display_name = registration.display_name or registration.username
-            if display_name in participant_selections:
-                selection = participant_selections[display_name]
-                
-                # Ищем или создаем предпочтения пользователя
-                user_prefs = db_session.query(UserPreferences).filter_by(user_id=registration.user_id).first()
-                if not user_prefs:
-                    user_prefs = UserPreferences(user_id=registration.user_id)
-                    db_session.add(user_prefs)
-                
-                # Обновляем предпочтения
-                if 'jersey' in selection and selection['jersey'] in ['light', 'dark']:
-                    user_prefs.preferred_jersey_type = JerseyType(selection['jersey'])
-                if 'team' in selection and selection['team'] in ['first', 'second']:
-                    user_prefs.preferred_team_type = TeamType(selection['team'])
-                if 'position' in selection and selection['position'] in ['forward', 'defender']:
-                    user_prefs.preferred_position_type = PositionType(selection['position'])
+        # Предпочтения пользователей будут обновлены в функции send_notifications
+        # после успешной отправки уведомления
         
         db_session.commit()
         
@@ -208,12 +219,97 @@ def send_notifications(training_id):
         success_count = 0
         failed_count = 0
         
-        # Отправляем уведомления только изменившимся участникам
+        # Отправляем уведомления участникам:
+        # 1. У которых team_assigned=False (еще не получили уведомления)
+        # 2. У которых team_assigned=True, но изменились параметры
+        logger.info(f"📋 Проверка уведомлений для тренировки {training_id}")
+        logger.info(f"📋 Список изменившихся участников: {changed_participants}")
+        
         for registration in training.registrations:
             display_name = registration.display_name or registration.username
+            
+            # Получаем статус распределения из таблицы team_assignments
+            team_assignment = db_session.query(TeamAssignment)\
+                .filter_by(training_id=training_id, user_id=registration.user_id)\
+                .first()
+            
+            # Если записи в TeamAssignment нет, считаем игрока нераспределенным
+            team_assigned = team_assignment.team_assigned if team_assignment else False
+            
+            # Дополнительная проверка: если записи нет, создаем её
+            if not team_assignment:
+                logger.warning(f"⚠️ У участника {display_name} нет записи в TeamAssignment, создаем её")
+                team_assignment = TeamAssignment(
+                    training_id=training_id,
+                    user_id=registration.user_id,
+                    team_assigned=False,
+                    assigned_at=None
+                )
+                db_session.add(team_assignment)
+                db_session.commit()
+                team_assigned = False
+            
+            # Проверяем, есть ли у игрока все необходимые параметры для распределения
+            has_all_params = bool(
+                registration.jersey_type and (
+                    registration.goalkeeper or 
+                    (registration.team_type and registration.position_type)
+                )
+            )
+            
+            # Получаем предпочтения пользователя из базы данных
+            user_prefs = db_session.query(UserPreferences).filter_by(user_id=registration.user_id).first()
+            
+            # Проверяем, изменились ли параметры по сравнению с user_preferences
+            params_changed = False
+            if user_prefs:
+                # Проверяем изменения для вратарей и полевых игроков
+                if registration.goalkeeper:
+                    # Для вратаря проверяем только майку
+                    if registration.jersey_type != user_prefs.preferred_jersey_type:
+                        params_changed = True
+                        logger.info(f"🔄 Изменилась майка для вратаря {display_name}: {user_prefs.preferred_jersey_type} → {registration.jersey_type}")
+                else:
+                    # Для полевого игрока проверяем майку, команду и амплуа
+                    if registration.jersey_type != user_prefs.preferred_jersey_type:
+                        params_changed = True
+                        logger.info(f"🔄 Изменилась майка для {display_name}: {user_prefs.preferred_jersey_type} → {registration.jersey_type}")
+                    if registration.team_type != user_prefs.preferred_team_type:
+                        params_changed = True
+                        logger.info(f"🔄 Изменилась команда для {display_name}: {user_prefs.preferred_team_type} → {registration.team_type}")
+                    if registration.position_type != user_prefs.preferred_position_type:
+                        params_changed = True
+                        logger.info(f"🔄 Изменилось амплуа для {display_name}: {user_prefs.preferred_position_type} → {registration.position_type}")
+            else:
+                # Если предпочтений нет, считаем что это новый игрок
+                params_changed = True
+                logger.info(f"🆕 Новый игрок {display_name}, предпочтения отсутствуют")
+            
+            # Отправляем уведомление если:
+            # 1. У участника НЕТ статуса "Команда назначена" (team_assigned = False) ИЛИ
+            # 2. Параметры изменились по сравнению с user_preferences
+            should_notify = (
+                (not team_assigned and has_all_params) or 
+                (params_changed and has_all_params)
+            )
+            
+            logger.info(f"👤 Участник {display_name}: team_assigned={team_assigned}, has_all_params={has_all_params}, should_notify={should_notify}")
+            logger.info(f"   📋 Параметры: jersey={registration.jersey_type}, team={registration.team_type}, position={registration.position_type}, goalkeeper={registration.goalkeeper}")
+            
             # Для вратарей проверяем только майку, для полевых игроков - майку, команду и амплуа
-            if display_name in changed_participants and registration.jersey_type and (
+            if should_notify and registration.jersey_type and (
                 registration.goalkeeper or (registration.team_type and registration.position_type)):
+                
+                # Проверяем, есть ли у игрока user_id (может ли он получить уведомление через Telegram)
+                if not registration.user_id:
+                    logger.info(f"⚠️ Игрок {display_name} добавлен вручную (без user_id), уведомление не отправляется")
+                    # Обновляем статус team_assigned для игроков без user_id
+                    if not team_assigned:
+                        team_assignment.team_assigned = True
+                        team_assignment.assigned_at = datetime.now()
+                        logger.info(f"✅ Обновлен статус team_assigned=True для игрока без user_id {display_name}")
+                    continue
+                
                 # Формируем индивидуальное сообщение для участника
                 jersey_emoji = "⚪" if registration.jersey_type.value == 'light' else "⚫"
                 team_emoji = "1️⃣" if registration.team_type and registration.team_type.value == 'first' else "2️⃣"
@@ -255,28 +351,96 @@ def send_notifications(training_id):
                     if telegram_response.status_code == 200:
                         success_count += 1
                         logger.info(f"✅ Уведомление отправлено участнику {display_name} ({registration.jersey_type.value})")
+                        
+                        # Обновляем статус team_assigned после успешной отправки уведомления
+                        if not team_assigned:
+                            team_assignment.team_assigned = True
+                            team_assignment.assigned_at = datetime.now()
+                            logger.info(f"✅ Обновлен статус team_assigned=True для {display_name}")
+                        
+                        # Обновляем user_preferences с новыми параметрами
+                        if not user_prefs:
+                            user_prefs = UserPreferences(user_id=registration.user_id)
+                            db_session.add(user_prefs)
+                            logger.info(f"🆕 Создаем новые предпочтения для {display_name}")
+                        
+                        user_prefs.preferred_jersey_type = registration.jersey_type
+                        if not registration.goalkeeper:
+                            user_prefs.preferred_team_type = registration.team_type
+                            user_prefs.preferred_position_type = registration.position_type
+                        logger.info(f"💾 Обновлены предпочтения для {display_name}")
                     else:
-                        failed_count += 1
-                        logger.error(f"❌ Ошибка отправки участнику {display_name}: {telegram_response.text}")
+                        # Проверяем, является ли ошибка "chat not found" (игрок без Telegram аккаунта)
+                        response_text = telegram_response.text
+                        if "chat not found" in response_text.lower():
+                            logger.info(f"ℹ️ Игрок {display_name} не имеет Telegram аккаунта, уведомление не отправлено")
+                            # Обновляем статус team_assigned для игроков без Telegram аккаунта
+                            if not team_assigned:
+                                team_assignment.team_assigned = True
+                                team_assignment.assigned_at = datetime.now()
+                                logger.info(f"✅ Обновлен статус team_assigned=True для игрока без Telegram аккаунта {display_name}")
+                            
+                            # Обновляем user_preferences даже для игроков без Telegram аккаунта
+                            if not user_prefs:
+                                user_prefs = UserPreferences(user_id=registration.user_id)
+                                db_session.add(user_prefs)
+                            
+                            user_prefs.preferred_jersey_type = registration.jersey_type
+                            if not registration.goalkeeper:
+                                user_prefs.preferred_team_type = registration.team_type
+                                user_prefs.preferred_position_type = registration.position_type
+                            logger.info(f"💾 Обновлены предпочтения для игрока без Telegram аккаунта {display_name}")
+                        else:
+                            failed_count += 1
+                            logger.error(f"❌ Ошибка отправки участнику {display_name}: {response_text}")
                         
                 except Exception as e:
-                    failed_count += 1
-                    logger.error(f"❌ Ошибка отправки участнику {display_name}: {e}")
+                    # Проверяем, является ли ошибка связанной с отсутствием Telegram аккаунта
+                    error_str = str(e).lower()
+                    if "chat not found" in error_str or "user not found" in error_str:
+                        logger.info(f"ℹ️ Игрок {display_name} не имеет Telegram аккаунта, уведомление не отправлено")
+                        # Обновляем статус team_assigned для игроков без Telegram аккаунта
+                        if not team_assigned:
+                            team_assignment.team_assigned = True
+                            team_assignment.assigned_at = datetime.now()
+                            logger.info(f"✅ Обновлен статус team_assigned=True для игрока без Telegram аккаунта {display_name}")
+                        
+                        # Обновляем user_preferences даже для игроков без Telegram аккаунта
+                        if not user_prefs:
+                            user_prefs = UserPreferences(user_id=registration.user_id)
+                            db_session.add(user_prefs)
+                        
+                        user_prefs.preferred_jersey_type = registration.jersey_type
+                        if not registration.goalkeeper:
+                            user_prefs.preferred_team_type = registration.team_type
+                            user_prefs.preferred_position_type = registration.position_type
+                        logger.info(f"💾 Обновлены предпочтения для игрока без Telegram аккаунта {display_name}")
+                    else:
+                        failed_count += 1
+                        logger.error(f"❌ Ошибка отправки участнику {display_name}: {e}")
         
         # Логируем общий результат
         logger.info(f"📊 Итоги отправки уведомлений для тренировки {training_id}")
         logger.info(f"✅ Успешно отправлено: {success_count}")
         logger.info(f"❌ Ошибок отправки: {failed_count}")
         
+        # Сохраняем изменения в базе данных
+        db_session.commit()
+        
         if success_count > 0:
             return jsonify({
                 'success': True, 
                 'message': f'Уведомления отправлены {success_count} участникам. Ошибок: {failed_count}'
             })
-        else:
+        elif failed_count > 0:
             return jsonify({
                 'success': False, 
-                'error': 'Не удалось отправить ни одного уведомления'
+                'error': f'Ошибки при отправке уведомлений: {failed_count}'
+            })
+        else:
+            return jsonify({
+                'success': True, 
+                'message': 'Все игроки распределены по командам и пятеркам!'
             })
         
     except Exception as e:
@@ -576,6 +740,15 @@ def remove_participant(training_id, participant_id):
             return jsonify({'success': False, 'error': 'Participant not found'}), 404
         
         participant_name = registration.display_name or registration.username or 'Без имени'
+        
+        # Удаляем запись из team_assignments
+        team_assignment = db_session.query(TeamAssignment)\
+            .filter_by(training_id=training_id, user_id=registration.user_id)\
+            .first()
+        
+        if team_assignment:
+            db_session.delete(team_assignment)
+            logger.info(f"🗑️ Удалена запись TeamAssignment для участника {participant_name}")
         
         # Удаляем регистрацию
         db_session.delete(registration)

@@ -18,6 +18,23 @@ class PositionType(enum.Enum):
     FORWARD = "forward"  # Нап
     DEFENDER = "defender"  # Зщ
 
+class TeamAssignment(Base):
+    __tablename__ = 'team_assignments'
+    
+    id = Column(Integer, primary_key=True)
+    training_id = Column(Integer, ForeignKey('trainings.id'), nullable=False)
+    user_id = Column(BigInteger, nullable=False)
+    team_assigned = Column(Boolean, default=False, nullable=False)  # Статус распределения на эту тренировку
+    assigned_at = Column(DateTime, nullable=True)  # Время когда было назначено распределение
+    
+    # Связи
+    training = relationship('Training', overlaps="team_assignments")
+    
+    # Уникальный индекс для пары training_id + user_id
+    __table_args__ = (
+        {'extend_existing': True}
+    )
+
 class Training(Base):
     __tablename__ = 'trainings'
     
@@ -25,6 +42,7 @@ class Training(Base):
     date_time = Column(DateTime, nullable=False)
     max_participants = Column(Integer, default=10)
     registrations = relationship('Registration', back_populates='training', cascade='all, delete-orphan')
+    team_assignments = relationship('TeamAssignment', cascade='all, delete-orphan')
 
 class Registration(Base):
     __tablename__ = 'registrations'
@@ -39,7 +57,6 @@ class Registration(Base):
     team_type = Column(Enum(TeamType), nullable=True)  # Новое поле для выбора команды
     position_type = Column(Enum(PositionType), nullable=True)  # Поле для амплуа (Нап/Зщ)
     goalkeeper = Column(Boolean, default=False, nullable=False)  # Поле для обозначения вратаря
-    team_assigned = Column(Boolean, default=False, nullable=False)  # Поле для отметки "Команда назначена"
     paid = Column(Boolean, default=False, nullable=False)  # Поле для отметки "Оплатил тренировку"
     last_payment_reminder = Column(DateTime, nullable=True)  # Время последнего напоминания об оплате
     

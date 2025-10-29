@@ -4,7 +4,7 @@ from telegram.error import NetworkError, TimedOut, BadRequest, Forbidden
 from datetime import datetime
 import logging
 import re
-from ..models import Training, Registration, UserPreferences, Player, PositionType
+from ..models import Training, Registration, UserPreferences, Player, PositionType, TeamAssignment
 from ..config import Config
 from ..database import db_session
 from .weekly_posts import start_weekly_post_scheduler, send_weekly_training_post
@@ -350,8 +350,14 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
     for i, reg in enumerate(registrations, 1):
         message += f"{i}. 📅 {reg.training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
         
+        # Получаем статус team_assigned из таблицы TeamAssignment
+        team_assignment = db_session.query(TeamAssignment)\
+            .filter_by(training_id=reg.training_id, user_id=reg.user_id)\
+            .first()
+        team_assigned = team_assignment.team_assigned if team_assignment else False
+        
         # Если команда назначена, показываем полную информацию
-        if reg.team_assigned:
+        if team_assigned:
             # Добавляем информацию о выбранной футболке и команде
             if reg.jersey_type:
                 if reg.jersey_type.value == 'light':
@@ -481,9 +487,15 @@ async def view_training_participants(update: Update, context: ContextTypes.DEFAU
         for reg in training.registrations:
             display_name = reg.display_name or reg.username or 'Без имени'
             
+            # Получаем статус team_assigned из таблицы TeamAssignment
+            team_assignment = db_session.query(TeamAssignment)\
+                .filter_by(training_id=training.id, user_id=reg.user_id)\
+                .first()
+            team_assigned = team_assignment.team_assigned if team_assignment else False
+            
             if reg.goalkeeper:
                 goalkeepers.append((display_name, reg.jersey_type, reg.paid))
-            elif reg.team_assigned and reg.jersey_type and reg.team_type:
+            elif team_assigned and reg.jersey_type and reg.team_type:
                 # Добавляем информацию об амплуа для полевых игроков
                 position_info = ""
                 if reg.position_type:
@@ -615,8 +627,14 @@ async def view_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Используем display_name если есть, иначе username
             display_name = reg.display_name or reg.username or "Без имени"
             
+            # Получаем статус team_assigned из таблицы TeamAssignment
+            team_assignment = db_session.query(TeamAssignment)\
+                .filter_by(training_id=training.id, user_id=reg.user_id)\
+                .first()
+            team_assigned = team_assignment.team_assigned if team_assignment else False
+            
             # Если команда назначена, показываем полную информацию
-            if reg.team_assigned:
+            if team_assigned:
                 # Добавляем информацию о выбранной футболке и команде
                 if reg.jersey_type:
                     if reg.jersey_type.value == 'light':
