@@ -988,18 +988,33 @@ def create_message():
         repeat_type = RepeatType.ONCE
         repeat_days = None
         
+        # Получаем тип повторения
+        repeat_type_str = data.get('repeat_type', 'once')
+        repeat_type = RepeatType(repeat_type_str)
+        
+        # Получаем дни недели для еженедельного повторения
+        if repeat_type == RepeatType.WEEKLY:
+            days = data.get('repeat_days', [])
+            if days:
+                repeat_days = days
+        
+        # Если это запланированная отправка (не немедленная)
         if not send_immediately:
             scheduled_time_str = data.get('scheduled_time')
             if scheduled_time_str:
                 scheduled_time = datetime.strptime(scheduled_time_str, '%Y-%m-%dT%H:%M')
-            
-            repeat_type_str = data.get('repeat_type', 'once')
-            repeat_type = RepeatType(repeat_type_str)
-            
-            if repeat_type == RepeatType.WEEKLY:
-                days = data.get('repeat_days', [])
-                if days:
-                    repeat_days = days
+        
+        # Если это периодическое сообщение с немедленной отправкой,
+        # устанавливаем scheduled_time для следующих отправок
+        elif repeat_type != RepeatType.ONCE:
+            scheduled_time_str = data.get('scheduled_time')
+            if scheduled_time_str:
+                # Используем указанное время для следующих отправок
+                scheduled_time = datetime.strptime(scheduled_time_str, '%Y-%m-%dT%H:%M')
+            else:
+                # Если время не указано, устанавливаем на завтра в текущее время
+                now = datetime.now()
+                scheduled_time = (now + timedelta(days=1)).replace(second=0, microsecond=0)
         
         message = ScheduledMessage(
             message_text=message_text,

@@ -174,6 +174,11 @@ async def check_and_send_scheduled_messages(bot: Bot):
             .filter(ScheduledMessage.is_active == True)\
             .all()
         
+        if not active_messages:
+            return 0
+        
+        logger.debug(f"🔍 Проверка {len(active_messages)} активных сообщений")
+        
         sent_count = 0
         for message in active_messages:
             try:
@@ -182,70 +187,107 @@ async def check_and_send_scheduled_messages(bot: Bot):
                     if message.scheduled_time and message.scheduled_time <= now:
                         # Проверяем, не было ли уже отправлено
                         if not message.last_sent_at:
+                            logger.info(f"⏰ Время отправки разового сообщения #{message.id} наступило: {message.scheduled_time}")
                             success = await send_scheduled_message(bot, message)
                             if success:
                                 sent_count += 1
                                 # Деактивируем разовое сообщение после отправки
                                 message.is_active = False
                                 db_session.commit()
+                                logger.info(f"✅ Разовое сообщение #{message.id} отправлено и деактивировано")
+                            else:
+                                logger.warning(f"⚠️ Не удалось отправить разовое сообщение #{message.id}")
+                        else:
+                            logger.debug(f"⏭️ Разовое сообщение #{message.id} уже было отправлено ранее")
+                    elif message.scheduled_time:
+                        logger.debug(f"⏳ Разовое сообщение #{message.id} запланировано на {message.scheduled_time}, ждем...")
                 
-                # Для периодических сообщений проверяем scheduled_time
+                # Для периодических сообщений
                 else:
-                    # Проверяем, нужно ли отправлять сейчас
-                    should_send = False
-                    
+                    # Если scheduled_time не установлено, вычисляем его
                     if not message.scheduled_time:
-                        # Если scheduled_time не установлено, пропускаем
-                        continue
+                        next_time = calculate_next_send_time(message)
+                        if next_time:
+                            message.scheduled_time = next_time
+                            db_session.commit()
+                            logger.info(f"📅 Установлено время следующей отправки для сообщения #{message.id}: {next_time}")
+                        else:
+                            logger.warning(f"⚠️ Не удалось вычислить время отправки для сообщения #{message.id}")
+                            continue
                     
+                    # Проверяем, наступило ли время отправки
                     if message.scheduled_time <= now:
                         # Проверяем, не отправляли ли уже в этот период
+                        should_send = False
+                        
                         if not message.last_sent_at:
                             should_send = True
+                            logger.info(f"⏰ Первая отправка периодического сообщения #{message.id} (тип: {message.repeat_type.value})")
                         else:
-                            # Для daily проверяем, что прошло больше суток
+                            # Проверяем интервал с последней отправки
+                            time_since_last = now - message.last_sent_at
+                            
+                            # Для daily проверяем, что прошло больше 23 часов (с запасом)
                             if message.repeat_type == RepeatType.DAILY:
-                                if (now - message.last_sent_at).total_seconds() >= 86400:
+                                if time_since_last.total_seconds() >= 82800:  # 23 часа
                                     should_send = True
-                            # Для weekly проверяем, что прошло больше недели
+                                    logger.info(f"⏰ Время ежедневной отправки сообщения #{message.id} наступило (прошло {time_since_last})")
+                            # Для weekly проверяем, что прошло больше 6 дней
                             elif message.repeat_type == RepeatType.WEEKLY:
-                                if (now - message.last_sent_at).total_seconds() >= 604800:
+                                if time_since_last.days >= 6:
                                     should_send = True
-                            # Для monthly проверяем, что прошло больше месяца
+                                    logger.info(f"⏰ Время еженедельной отправки сообщения #{message.id} наступило (прошло {time_since_last.days} дней)")
+                            # Для monthly проверяем, что прошло больше 27 дней
                             elif message.repeat_type == RepeatType.MONTHLY:
-                                if (now - message.last_sent_at).days >= 28:
+                                if time_since_last.days >= 27:
                                     should_send = True
+                                    logger.info(f"⏰ Время ежемесячной отправки сообщения #{message.id} наступило (прошло {time_since_last.days} дней)")
                         
                         if should_send:
                             success = await send_scheduled_message(bot, message)
                             if success:
                                 sent_count += 1
                                 # Обновляем scheduled_time для следующей отправки
-                                message.scheduled_time = calculate_next_send_time(message)
-                                db_session.commit()
+                                next_time = calculate_next_send_time(message)
+                                if next_time:
+                                    message.scheduled_time = next_time
+                                    db_session.commit()
+                                    logger.info(f"✅ Периодическое сообщение #{message.id} отправлено. Следующая отправка: {next_time}")
+                                else:
+                                    logger.warning(f"⚠️ Сообщение #{message.id} отправлено, но не удалось вычислить следующее время отправки")
+                            else:
+                                logger.warning(f"⚠️ Не удалось отправить периодическое сообщение #{message.id}")
+                    else:
+                        logger.debug(f"⏳ Периодическое сообщение #{message.id} запланировано на {message.scheduled_time}, ждем...")
                 
             except Exception as e:
-                logger.error(f"Ошибка при обработке сообщения #{message.id}: {e}")
+                logger.error(f"❌ Ошибка при обработке сообщения #{message.id}: {e}", exc_info=True)
+                db_session.rollback()
                 continue
         
         if sent_count > 0:
             logger.info(f"📨 Отправлено запланированных сообщений: {sent_count}")
+        else:
+            logger.debug(f"📋 Проверка завершена, сообщений для отправки не найдено")
         
         return sent_count
         
     except Exception as e:
-        logger.error(f"❌ Ошибка в check_and_send_scheduled_messages: {e}")
+        logger.error(f"❌ Ошибка в check_and_send_scheduled_messages: {e}", exc_info=True)
         return 0
 
 async def message_scheduler_task(bot: Bot):
     """Фоновая задача для проверки и отправки запланированных сообщений"""
     logger.info("🔄 Запуск планировщика запланированных сообщений")
     
+    # Небольшая задержка при старте, чтобы дать приложению полностью инициализироваться
+    await asyncio.sleep(5)
+    
     while True:
         try:
             await check_and_send_scheduled_messages(bot)
         except Exception as e:
-            logger.error(f"❌ Ошибка в планировщике сообщений: {e}")
+            logger.error(f"❌ Ошибка в планировщике сообщений: {e}", exc_info=True)
         
         # Проверяем каждую минуту
         await asyncio.sleep(60)
