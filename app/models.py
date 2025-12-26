@@ -1,8 +1,9 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, ForeignKey, Enum, Boolean
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, ForeignKey, Enum, Boolean, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 import enum
+import json
 
 Base = declarative_base()
 
@@ -17,6 +18,12 @@ class TeamType(enum.Enum):
 class PositionType(enum.Enum):
     FORWARD = "forward"  # Нап
     DEFENDER = "defender"  # Зщ
+
+class RepeatType(enum.Enum):
+    ONCE = "once"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
 
 class TeamAssignment(Base):
     __tablename__ = 'team_assignments'
@@ -86,4 +93,34 @@ class UserPreferences(Base):
     preferred_position_type = Column(Enum(PositionType), nullable=True)  # Предпочтительное амплуа
     display_name = Column(String(100), nullable=True)  # Последнее переименованное имя пользователя
     goalkeeper = Column(Boolean, default=False, nullable=False)  # Предпочтение быть вратарем
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False) 
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+class ScheduledMessage(Base):
+    __tablename__ = 'scheduled_messages'
+    
+    id = Column(Integer, primary_key=True)
+    message_text = Column(Text, nullable=False)  # Текст сообщения
+    send_immediately = Column(Boolean, default=False, nullable=False)  # Флаг немедленной отправки
+    scheduled_time = Column(DateTime, nullable=True)  # Время первой отправки
+    repeat_type = Column(Enum(RepeatType), nullable=False, default=RepeatType.ONCE)  # Тип повторения
+    repeat_days = Column(String(100), nullable=True)  # Дни недели для еженедельного повторения (JSON)
+    is_active = Column(Boolean, default=True, nullable=False)  # Активна ли задача
+    last_sent_at = Column(DateTime, nullable=True)  # Время последней отправки
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+    
+    def get_repeat_days(self):
+        """Возвращает список дней недели из JSON строки"""
+        if self.repeat_days:
+            try:
+                return json.loads(self.repeat_days)
+            except:
+                return []
+        return []
+    
+    def set_repeat_days(self, days):
+        """Устанавливает дни недели в JSON строку"""
+        if days:
+            self.repeat_days = json.dumps(days)
+        else:
+            self.repeat_days = None 

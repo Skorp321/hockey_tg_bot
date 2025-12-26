@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 import requests
 import logging
-from ..models import Training, Registration, JerseyType, TeamType, PositionType, UserPreferences, Player, TeamAssignment
+from ..models import Training, Registration, JerseyType, TeamType, PositionType, UserPreferences, Player, TeamAssignment, ScheduledMessage, RepeatType
 from ..database import db_session
 from ..config import Config
 from ..bot.weekly_posts import send_weekly_training_post
@@ -960,5 +960,340 @@ def send_weekly_post():
         logger.error(f"Ошибка в send_weekly_post: {e}")
         return jsonify({
             'success': False, 
+            'error': f'Ошибка: {str(e)}'
+        }), 500
+
+@web.route('/messages')
+@login_required
+def messages_page():
+    """Страница управления сообщениями"""
+    messages = db_session.query(ScheduledMessage)\
+        .order_by(ScheduledMessage.created_at.desc())\
+        .all()
+    return render_template('messages.html', messages=messages)
+
+@web.route('/messages', methods=['POST'])
+@login_required
+def create_message():
+    """Создание нового сообщения"""
+    try:
+        data = request.get_json()
+        message_text = data.get('message_text', '').strip()
+        
+        if not message_text:
+            return jsonify({'success': False, 'error': 'Текст сообщения не может быть пустым'}), 400
+        
+        send_immediately = data.get('send_immediately', False)
+        scheduled_time = None
+        repeat_type = RepeatType.ONCE
+        repeat_days = None
+        
+        if not send_immediately:
+            scheduled_time_str = data.get('scheduled_time')
+            if scheduled_time_str:
+                scheduled_time = datetime.strptime(scheduled_time_str, '%Y-%m-%dT%H:%M')
+            
+            repeat_type_str = data.get('repeat_type', 'once')
+            repeat_type = RepeatType(repeat_type_str)
+            
+            if repeat_type == RepeatType.WEEKLY:
+                days = data.get('repeat_days', [])
+                if days:
+                    repeat_days = days
+        
+        message = ScheduledMessage(
+            message_text=message_text,
+            send_immediately=send_immediately,
+            scheduled_time=scheduled_time,
+            repeat_type=repeat_type,
+            is_active=True
+        )
+        
+        if repeat_days:
+            message.set_repeat_days(repeat_days)
+        
+        db_session.add(message)
+        db_session.commit()
+        
+        # Если нужно отправить немедленно
+        if send_immediately:
+            try:
+                if not Config.CHANNEL_ID:
+                    return jsonify({
+                        'success': False,
+                        'error': 'CHANNEL_ID не настроен. Сообщение создано, но не отправлено.'
+                    }), 400
+                
+                # Валидация формата CHANNEL_ID
+                try:
+                    channel_id_int = int(Config.CHANNEL_ID)
+                    # Для каналов и супергрупп ID должен начинаться с -100
+                    if channel_id_int > 0:
+                        logger.warning(f"⚠️ CHANNEL_ID ({Config.CHANNEL_ID}) выглядит как личный чат. Для каналов/групп ID должен начинаться с -100")
+                except (ValueError, TypeError):
+                    return jsonify({
+                        'success': False,
+                        'error': f'CHANNEL_ID имеет неверный формат: {Config.CHANNEL_ID}. Должно быть числовое значение.'
+                    }), 400
+                
+                # Отправляем сообщение через Telegram Bot API
+                send_params = {
+                    'chat_id': Config.CHANNEL_ID,
+                    'text': message.message_text
+                }
+                
+                # Добавляем message_thread_id только если он задан
+                if Config.MESSAGE_THREAD_ID:
+                    send_params['message_thread_id'] = int(Config.MESSAGE_THREAD_ID)
+                
+                telegram_response = requests.post(
+                    f'https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/sendMessage',
+                    json=send_params,
+                    timeout=10
+                )
+                
+                # Проверяем ответ от Telegram API
+                response_data = telegram_response.json() if telegram_response.headers.get('content-type', '').startswith('application/json') else {}
+                
+                if telegram_response.status_code == 200 and response_data.get('ok', False):
+                    # Обновляем время последней отправки
+                    message.last_sent_at = datetime.now()
+                    db_session.commit()
+                    logger.info(f"✅ Сообщение #{message.id} отправлено немедленно в канал {Config.CHANNEL_ID}")
+                else:
+                    # Извлекаем описание ошибки из ответа
+                    error_description = response_data.get('description', telegram_response.text)
+                    error_code = response_data.get('error_code', 'unknown')
+                    logger.error(f"❌ Ошибка отправки сообщения (код {error_code}): {error_description}")
+                    
+                    # Формируем понятное сообщение об ошибке
+                    if 'chat not found' in error_description.lower():
+                        error_message = f'Канал не найден. Проверьте, что:\n1. CHANNEL_ID указан правильно (должен начинаться с -100 для каналов/супергрупп)\n2. Бот добавлен в канал/группу как администратор\n3. Бот имеет права на отправку сообщений\n\nТекущий CHANNEL_ID: {Config.CHANNEL_ID}'
+                    elif 'bot was blocked' in error_description.lower():
+                        error_message = 'Бот заблокирован в канале. Добавьте бота обратно в канал.'
+                    elif 'not enough rights' in error_description.lower():
+                        error_message = 'У бота недостаточно прав. Убедитесь, что бот является администратором канала с правами на отправку сообщений.'
+                    else:
+                        error_message = f'Не удалось отправить сообщение: {error_description}'
+                    
+                    return jsonify({
+                        'success': False,
+                        'error': error_message
+                    }), 500
+                    
+            except Exception as e:
+                logger.error(f"Ошибка при немедленной отправке: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': f'Ошибка при отправке: {str(e)}'
+                }), 500
+        
+        return jsonify({
+            'success': True,
+            'message': 'Сообщение успешно создано'
+        })
+        
+    except Exception as e:
+        logger.error(f"Ошибка при создании сообщения: {e}")
+        db_session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@web.route('/messages/<int:message_id>')
+@login_required
+def get_message(message_id):
+    """Получение сообщения по ID"""
+    try:
+        message = db_session.query(ScheduledMessage).get(message_id)
+        if not message:
+            return jsonify({'success': False, 'error': 'Сообщение не найдено'}), 404
+        
+        return jsonify({
+            'success': True,
+            'message': {
+                'id': message.id,
+                'message_text': message.message_text,
+                'send_immediately': message.send_immediately,
+                'scheduled_time': message.scheduled_time.isoformat() if message.scheduled_time else None,
+                'repeat_type': message.repeat_type.value,
+                'repeat_days': message.get_repeat_days(),
+                'is_active': message.is_active,
+                'last_sent_at': message.last_sent_at.isoformat() if message.last_sent_at else None
+            }
+        })
+    except Exception as e:
+        logger.error(f"Ошибка при получении сообщения: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@web.route('/messages/<int:message_id>', methods=['PUT'])
+@login_required
+def update_message(message_id):
+    """Обновление сообщения"""
+    try:
+        message = db_session.query(ScheduledMessage).get(message_id)
+        if not message:
+            return jsonify({'success': False, 'error': 'Сообщение не найдено'}), 404
+        
+        data = request.get_json()
+        message_text = data.get('message_text', '').strip()
+        
+        if not message_text:
+            return jsonify({'success': False, 'error': 'Текст сообщения не может быть пустым'}), 400
+        
+        message.message_text = message_text
+        send_immediately = data.get('send_immediately', False)
+        message.send_immediately = send_immediately
+        
+        if not send_immediately:
+            scheduled_time_str = data.get('scheduled_time')
+            if scheduled_time_str:
+                message.scheduled_time = datetime.strptime(scheduled_time_str, '%Y-%m-%dT%H:%M')
+            else:
+                message.scheduled_time = None
+            
+            repeat_type_str = data.get('repeat_type', 'once')
+            message.repeat_type = RepeatType(repeat_type_str)
+            
+            if message.repeat_type == RepeatType.WEEKLY:
+                days = data.get('repeat_days', [])
+                message.set_repeat_days(days if days else None)
+            else:
+                message.set_repeat_days(None)
+        
+        db_session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Сообщение успешно обновлено'
+        })
+        
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении сообщения: {e}")
+        db_session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@web.route('/messages/<int:message_id>', methods=['DELETE'])
+@login_required
+def delete_message(message_id):
+    """Удаление сообщения"""
+    try:
+        message = db_session.query(ScheduledMessage).get(message_id)
+        if not message:
+            return jsonify({'success': False, 'error': 'Сообщение не найдено'}), 404
+        
+        db_session.delete(message)
+        db_session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Сообщение успешно удалено'
+        })
+    except Exception as e:
+        logger.error(f"Ошибка при удалении сообщения: {e}")
+        db_session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@web.route('/messages/<int:message_id>/toggle', methods=['POST'])
+@login_required
+def toggle_message(message_id):
+    """Активация/деактивация сообщения"""
+    try:
+        message = db_session.query(ScheduledMessage).get(message_id)
+        if not message:
+            return jsonify({'success': False, 'error': 'Сообщение не найдено'}), 404
+        
+        message.is_active = not message.is_active
+        db_session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Статус сообщения изменен',
+            'is_active': message.is_active
+        })
+    except Exception as e:
+        logger.error(f"Ошибка при изменении статуса сообщения: {e}")
+        db_session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@web.route('/messages/<int:message_id>/send-now', methods=['POST'])
+@login_required
+def send_message_now(message_id):
+    """Немедленная отправка сообщения"""
+    try:
+        message = db_session.query(ScheduledMessage).get(message_id)
+        if not message:
+            return jsonify({'success': False, 'error': 'Сообщение не найдено'}), 404
+        
+        if not Config.CHANNEL_ID:
+            return jsonify({
+                'success': False,
+                'error': 'CHANNEL_ID не настроен. Проверьте настройки.'
+            }), 400
+        
+        # Валидация формата CHANNEL_ID
+        try:
+            channel_id_int = int(Config.CHANNEL_ID)
+            # Для каналов и супергрупп ID должен начинаться с -100
+            if channel_id_int > 0:
+                logger.warning(f"⚠️ CHANNEL_ID ({Config.CHANNEL_ID}) выглядит как личный чат. Для каналов/групп ID должен начинаться с -100")
+        except (ValueError, TypeError):
+            return jsonify({
+                'success': False,
+                'error': f'CHANNEL_ID имеет неверный формат: {Config.CHANNEL_ID}. Должно быть числовое значение.'
+            }), 400
+        
+        # Отправляем сообщение через Telegram Bot API
+        send_params = {
+            'chat_id': Config.CHANNEL_ID,
+            'text': message.message_text
+        }
+        
+        # Добавляем message_thread_id только если он задан
+        if Config.MESSAGE_THREAD_ID:
+            send_params['message_thread_id'] = int(Config.MESSAGE_THREAD_ID)
+        
+        telegram_response = requests.post(
+            f'https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/sendMessage',
+            json=send_params,
+            timeout=10
+        )
+        
+        # Проверяем ответ от Telegram API
+        response_data = telegram_response.json() if telegram_response.headers.get('content-type', '').startswith('application/json') else {}
+        
+        if telegram_response.status_code == 200 and response_data.get('ok', False):
+            # Обновляем время последней отправки
+            message.last_sent_at = datetime.now()
+            db_session.commit()
+            logger.info(f"✅ Сообщение #{message.id} отправлено немедленно в канал {Config.CHANNEL_ID}")
+            return jsonify({
+                'success': True,
+                'message': 'Сообщение успешно отправлено'
+            })
+        else:
+            # Извлекаем описание ошибки из ответа
+            error_description = response_data.get('description', telegram_response.text)
+            error_code = response_data.get('error_code', 'unknown')
+            logger.error(f"❌ Ошибка отправки сообщения (код {error_code}): {error_description}")
+            
+            # Формируем понятное сообщение об ошибке
+            if 'chat not found' in error_description.lower():
+                error_message = f'Канал не найден. Проверьте, что:\n1. CHANNEL_ID указан правильно (должен начинаться с -100 для каналов/супергрупп)\n2. Бот добавлен в канал/группу как администратор\n3. Бот имеет права на отправку сообщений\n\nТекущий CHANNEL_ID: {Config.CHANNEL_ID}'
+            elif 'bot was blocked' in error_description.lower():
+                error_message = 'Бот заблокирован в канале. Добавьте бота обратно в канал.'
+            elif 'not enough rights' in error_description.lower():
+                error_message = 'У бота недостаточно прав. Убедитесь, что бот является администратором канала с правами на отправку сообщений.'
+            else:
+                error_message = f'Не удалось отправить сообщение: {error_description}'
+            
+            return jsonify({
+                'success': False,
+                'error': error_message
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Ошибка в send_message_now: {e}")
+        db_session.rollback()
+        return jsonify({
+            'success': False,
             'error': f'Ошибка: {str(e)}'
         }), 500

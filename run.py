@@ -2,6 +2,7 @@ import asyncio
 import signal
 from app import create_app
 from app.bot.handlers import start_bot, check_payment_reminders
+from app.bot.message_scheduler import start_message_scheduler
 from hypercorn.asyncio import serve
 from hypercorn.config import Config as HyperConfig
 
@@ -71,6 +72,8 @@ async def main():
     if bot_app:
         asyncio.create_task(payment_reminder_task())
         print("🔄 Запущена фоновая задача проверки напоминаний об оплате")
+        
+        # Планировщик сообщений уже запущен в start_bot через start_message_scheduler
     
     # Добавляем обработчики сигналов для корректного завершения
     for sig in (signal.SIGTERM, signal.SIGINT):

@@ -7,7 +7,7 @@ import re
 from ..models import Training, Registration, UserPreferences, Player, PositionType, TeamAssignment
 from ..config import Config
 from ..database import db_session
-from .weekly_posts import start_weekly_post_scheduler, send_weekly_training_post
+from .weekly_posts import send_weekly_training_post
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -769,8 +769,9 @@ async def start_bot():
         
         print("✅ Telegram бот успешно запущен")
         
-        # Запускаем планировщик еженедельных постов
-        await start_weekly_post_scheduler(application.bot)
+        # Запускаем планировщик запланированных сообщений
+        from .message_scheduler import start_message_scheduler
+        await start_message_scheduler(application.bot)
         
         return application
         
