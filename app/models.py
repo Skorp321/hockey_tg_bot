@@ -18,12 +18,16 @@ class _EnumByValueOrName(Enum):
             return self._object_lookup[elem]
         except KeyError:
             pass
-        # Пробуем по имени (для старых записей: 'FORWARD', 'LIGHT' и т.д.)
-        try:
-            enum_class = self.enum_class
-            return enum_class[elem]
-        except (KeyError, TypeError):
-            pass
+        # Пробуем по имени (для старых записей из БД: 'LIGHT', 'FORWARD' и т.д.)
+        enum_class = self.enum_class
+        if enum_class is not None:
+            try:
+                return enum_class[elem]
+            except (KeyError, TypeError):
+                pass
+            for m in enum_class:
+                if m.name == elem:
+                    return m
         raise LookupError(
             "'%s' is not among the defined enum values. "
             "Possible values: %s" % (elem, [e.value for e in self.enum_class])

@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta
 from telegram import Bot
 from telegram.error import NetworkError, TimedOut, BadRequest
+from sqlalchemy import text
 from ..config import Config
 from ..database import db_session
 from ..models import ScheduledMessage, RepeatType
