@@ -169,10 +169,46 @@ async def check_and_send_scheduled_messages(bot: Bot):
     try:
         now = datetime.now()
         
-        # Получаем все активные сообщения
-        active_messages = db_session.query(ScheduledMessage)\
-            .filter(ScheduledMessage.is_active == True)\
-            .all()
+        # Всегда очищаем сессию перед началом, чтобы очистить любые предыдущие ошибки транзакции
+        try:
+            db_session.rollback()
+        except Exception:
+            pass  # Игнорируем ошибки при rollback
+        
+        # Удаляем текущую сессию для создания новой (для scoped_session)
+        try:
+            db_session.remove()
+        except Exception:
+            pass
+        
+        # Получаем все активные сообщения с обработкой ошибок транзакции
+        active_messages = []
+        max_retries = 3
+        for retry in range(max_retries):
+            try:
+                # Очищаем сессию перед каждым запросом
+                if retry > 0:
+                    try:
+                        db_session.rollback()
+                        db_session.remove()
+                    except Exception:
+                        pass
+                
+                active_messages = db_session.query(ScheduledMessage)\
+                    .filter(ScheduledMessage.is_active == True)\
+                    .all()
+                break  # Успешно получили данные
+            except Exception as e:
+                logger.error(f"❌ Ошибка при запросе к базе данных (попытка {retry + 1}/{max_retries}): {e}")
+                try:
+                    db_session.rollback()
+                    db_session.remove()
+                except Exception:
+                    pass
+                if retry == max_retries - 1:
+                    logger.error(f"❌ Не удалось получить данные после {max_retries} попыток")
+                    return 0
+                await asyncio.sleep(1)  # Небольшая задержка перед повтором
         
         if not active_messages:
             return 0
@@ -283,11 +319,24 @@ async def message_scheduler_task(bot: Bot):
     # Небольшая задержка при старте, чтобы дать приложению полностью инициализироваться
     await asyncio.sleep(5)
     
+    # Очищаем сессию перед началом работы планировщика
+    try:
+        db_session.rollback()
+        db_session.remove()
+    except Exception:
+        pass
+    
     while True:
         try:
             await check_and_send_scheduled_messages(bot)
         except Exception as e:
             logger.error(f"❌ Ошибка в планировщике сообщений: {e}", exc_info=True)
+            # Делаем rollback и очищаем сессию при любой ошибке
+            try:
+                db_session.rollback()
+                db_session.remove()
+            except Exception as rollback_error:
+                logger.error(f"❌ Ошибка при rollback: {rollback_error}")
         
         # Проверяем каждую минуту
         await asyncio.sleep(60)
@@ -296,6 +345,17 @@ async def start_message_scheduler(bot: Bot):
     """Запускает планировщик запланированных сообщений в фоновом режиме"""
     if not Config.CHANNEL_ID:
         logger.warning("CHANNEL_ID не настроен, планировщик сообщений не будет работать")
+        return
+    
+    # Проверяем подключение к базе данных перед запуском
+    try:
+        # Делаем простой запрос для проверки подключения
+        db_session.execute(text("SELECT 1"))
+        db_session.commit()
+    except Exception as e:
+        logger.error(f"❌ Ошибка подключения к базе данных при запуске планировщика: {e}")
+        db_session.rollback()
+        logger.warning("⚠️ Планировщик сообщений не будет запущен из-за ошибки подключения к БД")
         return
     
     # Запускаем планировщик в фоновом режиме

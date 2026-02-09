@@ -1,6 +1,6 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, Application
-from telegram.error import NetworkError, TimedOut, BadRequest, Forbidden
+from telegram.error import NetworkError, TimedOut, BadRequest, Forbidden, Conflict
 from datetime import datetime
 import logging
 import re
@@ -217,7 +217,6 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
         display_name=display_name,
         registered_at=datetime.now(),
         jersey_type=user_prefs.preferred_jersey_type if user_prefs else None,
-        team_type=user_prefs.preferred_team_type if user_prefs else None,
         goalkeeper=user_prefs.goalkeeper if user_prefs else False
     )
     
@@ -358,34 +357,28 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
         
         # Если команда назначена, показываем полную информацию
         if team_assigned:
-            # Добавляем информацию о выбранной футболке и команде
+            # Добавляем информацию о выбранной футболке
+            jersey_emojis = {
+                'light': '⚪',
+                'dark': '⚫',
+                'blue': '🔵',
+                'yellow': '🟡'
+            }
             if reg.jersey_type:
-                if reg.jersey_type.value == 'light':
-                    jersey_info = "⚪"
-                else:
-                    jersey_info = "⚫"
+                jersey_info = jersey_emojis.get(reg.jersey_type.value, '👕')
                 message += f"   👕 {jersey_info}"
             else:
                 message += f"   👕 Футболка не выбрана"
             
-            if reg.team_type:
-                if reg.team_type.value == 'first':
-                    team_info = "1️⃣"
+            # Добавляем информацию об амплуа для полевых игроков
+            if not reg.goalkeeper and reg.position_type:
+                if reg.position_type.value == 'forward':
+                    position_info = " - Нап"
                 else:
-                    team_info = "2️⃣"
-                message += f" {team_info}"
-                
-                # Добавляем информацию об амплуа для полевых игроков
-                if not reg.goalkeeper and reg.position_type:
-                    if reg.position_type.value == 'forward':
-                        position_info = " - Нап"
-                    else:
-                        position_info = " - Зщ"
-                    message += f"{position_info}"
-                
-                message += "\n"
-            else:
-                message += f" Команда не выбрана\n"
+                    position_info = " - Зщ"
+                message += f"{position_info}"
+            
+            message += "\n"
         else:
             message += f"   👕 Команда не назначена\n"
         
@@ -476,13 +469,20 @@ async def view_training_participants(update: Update, context: ContextTypes.DEFAU
             message += "Пока никто не записался\n\n"
             continue
         
-        # Сортируем участников: сначала вратари, потом игроки по командам и майкам
+        # Сортируем участников: сначала вратари, потом игроки по майкам
         goalkeepers = []
-        light_first_team = []
-        dark_first_team = []
-        light_second_team = []
-        dark_second_team = []
+        light_players = []
+        dark_players = []
+        blue_players = []
+        yellow_players = []
         unassigned = []
+        
+        jersey_emojis = {
+            'light': '⚪',
+            'dark': '⚫',
+            'blue': '🔵',
+            'yellow': '🟡'
+        }
         
         for reg in training.registrations:
             display_name = reg.display_name or reg.username or 'Без имени'
@@ -495,7 +495,7 @@ async def view_training_participants(update: Update, context: ContextTypes.DEFAU
             
             if reg.goalkeeper:
                 goalkeepers.append((display_name, reg.jersey_type, reg.paid))
-            elif team_assigned and reg.jersey_type and reg.team_type:
+            elif team_assigned and reg.jersey_type and reg.position_type:
                 # Добавляем информацию об амплуа для полевых игроков
                 position_info = ""
                 if reg.position_type:
@@ -504,14 +504,14 @@ async def view_training_participants(update: Update, context: ContextTypes.DEFAU
                     else:
                         position_info = " - Зщ"
                 
-                if reg.jersey_type.value == 'light' and reg.team_type.value == 'first':
-                    light_first_team.append((display_name, reg.paid, position_info))
-                elif reg.jersey_type.value == 'dark' and reg.team_type.value == 'first':
-                    dark_first_team.append((display_name, reg.paid, position_info))
-                elif reg.jersey_type.value == 'light' and reg.team_type.value == 'second':
-                    light_second_team.append((display_name, reg.paid, position_info))
-                elif reg.jersey_type.value == 'dark' and reg.team_type.value == 'second':
-                    dark_second_team.append((display_name, reg.paid, position_info))
+                if reg.jersey_type.value == 'light':
+                    light_players.append((display_name, reg.paid, position_info))
+                elif reg.jersey_type.value == 'dark':
+                    dark_players.append((display_name, reg.paid, position_info))
+                elif reg.jersey_type.value == 'blue':
+                    blue_players.append((display_name, reg.paid, position_info))
+                elif reg.jersey_type.value == 'yellow':
+                    yellow_players.append((display_name, reg.paid, position_info))
             else:
                 unassigned.append((display_name, reg.paid))
         
@@ -519,35 +519,32 @@ async def view_training_participants(update: Update, context: ContextTypes.DEFAU
         if goalkeepers:
             message += "🥅 *Вратари:*\n"
             for name, jersey_type, paid in goalkeepers:
-                jersey_emoji = "⚪" if jersey_type and jersey_type.value == 'light' else "⚫"
+                jersey_emoji = jersey_emojis.get(jersey_type.value, '👕') if jersey_type else '👕'
                 message += f"• {escape_markdown(name)} {jersey_emoji}\n"
             message += "\n"
         
-        # Выводим игроков первой пятерки (светлые)
-        if light_first_team:
-            message += "⚪ *1-ая пятерка (светлые):*\n"
-            for name, paid, position_info in light_first_team:
+        # Выводим игроков по цветам маек
+        if light_players:
+            message += "⚪ *Белые:*\n"
+            for name, paid, position_info in light_players:
                 message += f"• {escape_markdown(name)}{position_info}\n"
             message += "\n"
         
-        # Выводим игроков первой пятерки (темные)
-        if dark_first_team:
-            message += "⚫ *1-ая пятерка (темные):*\n"
-            for name, paid, position_info in dark_first_team:
+        if dark_players:
+            message += "⚫ *Черные:*\n"
+            for name, paid, position_info in dark_players:
                 message += f"• {escape_markdown(name)}{position_info}\n"
             message += "\n"
         
-        # Выводим игроков второй пятерки (светлые)
-        if light_second_team:
-            message += "⚪ *2-ая пятерка (светлые):*\n"
-            for name, paid, position_info in light_second_team:
+        if blue_players:
+            message += "🔵 *Синие:*\n"
+            for name, paid, position_info in blue_players:
                 message += f"• {escape_markdown(name)}{position_info}\n"
             message += "\n"
         
-        # Выводим игроков второй пятерки (темные)
-        if dark_second_team:
-            message += "⚫ *2-ая пятерка (темные):*\n"
-            for name, paid, position_info in dark_second_team:
+        if yellow_players:
+            message += "🟡 *Желтые:*\n"
+            for name, paid, position_info in yellow_players:
                 message += f"• {escape_markdown(name)}{position_info}\n"
             message += "\n"
         
@@ -635,34 +632,28 @@ async def view_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Если команда назначена, показываем полную информацию
             if team_assigned:
-                # Добавляем информацию о выбранной футболке и команде
+                # Добавляем информацию о выбранной футболке
+                jersey_emojis = {
+                    'light': '⚪',
+                    'dark': '⚫',
+                    'blue': '🔵',
+                    'yellow': '🟡'
+                }
                 if reg.jersey_type:
-                    if reg.jersey_type.value == 'light':
-                        jersey_info = "⚪"
-                    else:
-                        jersey_info = "⚫"
+                    jersey_info = jersey_emojis.get(reg.jersey_type.value, '👕')
                     message += f"{i}. {display_name} {jersey_info}"
                 else:
                     message += f"{i}. {display_name}"
                 
-                if reg.team_type:
-                    if reg.team_type.value == 'first':
-                        team_info = "1️⃣"
+                # Добавляем информацию об амплуа для полевых игроков
+                if not reg.goalkeeper and reg.position_type:
+                    if reg.position_type.value == 'forward':
+                        position_info = " - Нап"
                     else:
-                        team_info = "2️⃣"
-                    message += f" {team_info}"
-                    
-                    # Добавляем информацию об амплуа для полевых игроков
-                    if not reg.goalkeeper and reg.position_type:
-                        if reg.position_type.value == 'forward':
-                            position_info = " - Нап"
-                        else:
-                            position_info = " - Зщ"
-                        message += f"{position_info}"
-                    
-                    message += "\n"
-                else:
-                    message += "\n"
+                        position_info = " - Зщ"
+                    message += f"{position_info}"
+                
+                message += "\n"
             else:
                 # Если команда не назначена, показываем только фамилию
                 # Извлекаем фамилию из полного имени (последнее слово)
@@ -758,16 +749,21 @@ async def start_bot():
         await application.start()
         
         # Настраиваем polling с параметрами для обработки сетевых ошибок
-        await application.updater.start_polling(
-            drop_pending_updates=True,
-            allowed_updates=['message', 'callback_query'],
-            read_timeout=30,
-            write_timeout=30,
-            connect_timeout=30,
-            pool_timeout=30
-        )
-        
-        print("✅ Telegram бот успешно запущен")
+        try:
+            await application.updater.start_polling(
+                drop_pending_updates=True,
+                allowed_updates=['message', 'callback_query'],
+                read_timeout=30,
+                write_timeout=30,
+                connect_timeout=30,
+                pool_timeout=30
+            )
+            print("✅ Telegram бот успешно запущен")
+        except Conflict as e:
+            logger.warning(f"⚠️ Конфликт Telegram бота: {e}")
+            logger.warning("⚠️ Возможно, запущен другой экземпляр бота. Бот будет работать в ограниченном режиме.")
+            # Продолжаем работу без polling, но бот все еще может отправлять сообщения
+            print("⚠️ Telegram бот запущен в ограниченном режиме (без polling)")
         
         # Запускаем планировщик запланированных сообщений
         from .message_scheduler import start_message_scheduler
@@ -985,4 +981,10 @@ async def check_payment_reminders(bot):
         
     except Exception as e:
         logger.error(f"❌ Ошибка при проверке напоминаний об оплате: {e}")
+        # Делаем rollback при любой ошибке
+        try:
+            db_session.rollback()
+            db_session.remove()
+        except Exception:
+            pass
         return 0 

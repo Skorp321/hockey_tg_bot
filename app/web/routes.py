@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 import requests
 import logging
-from ..models import Training, Registration, JerseyType, TeamType, PositionType, UserPreferences, Player, TeamAssignment, ScheduledMessage, RepeatType
+from ..models import Training, Registration, JerseyType, PositionType, UserPreferences, Player, TeamAssignment, ScheduledMessage, RepeatType
 from ..database import db_session
 from ..config import Config
 from ..bot.weekly_posts import send_weekly_training_post
@@ -104,6 +104,11 @@ def get_participants(training_id):
             .first()
         team_assigned = team_assignment.team_assigned if team_assignment else False
         
+        # Сохранённые предпочтения игрока (для подстановки при отображении и при записи)
+        user_prefs = db_session.query(UserPreferences).filter_by(user_id=reg.user_id).first()
+        preferred_jersey = user_prefs.preferred_jersey_type.value if user_prefs and user_prefs.preferred_jersey_type else None
+        preferred_position = user_prefs.preferred_position_type.value if user_prefs and user_prefs.preferred_position_type else None
+        
         participants.append({
             'id': reg.id,
             'user_id': reg.user_id,
@@ -112,8 +117,9 @@ def get_participants(training_id):
             'name': display_name,
             'registered_at': reg.registered_at.strftime('%d.%m.%Y %H:%M'),
             'jersey_type': reg.jersey_type.value if reg.jersey_type else None,
-            'team_type': reg.team_type.value if reg.team_type else None,
             'position_type': reg.position_type.value if reg.position_type else None,
+            'preferred_jersey_type': preferred_jersey,
+            'preferred_position_type': preferred_position,
             'goalkeeper': reg.goalkeeper,
             'team_assigned': team_assigned,
             'paid': reg.paid
@@ -148,12 +154,8 @@ def save_jerseys(training_id):
                 selection = participant_selections[display_name]
                 
                 # Сохраняем майку
-                if 'jersey' in selection and selection['jersey'] in ['light', 'dark']:
+                if 'jersey' in selection and selection['jersey'] in ['light', 'dark', 'blue', 'yellow']:
                     registration.jersey_type = JerseyType(selection['jersey'])
-                
-                # Сохраняем команду
-                if 'team' in selection and selection['team'] in ['first', 'second']:
-                    registration.team_type = TeamType(selection['team'])
                 
                 # Сохраняем амплуа
                 if 'position' in selection and selection['position'] in ['forward', 'defender']:
@@ -178,16 +180,15 @@ def save_jerseys(training_id):
                     db_session.add(team_assignment)
                 
                 if registration.goalkeeper:
-                    if 'jersey' in selection and selection['jersey'] in ['light', 'dark']:
+                    if 'jersey' in selection and selection['jersey'] in ['light', 'dark', 'blue', 'yellow']:
                         logger.info(f"✅ Параметры сохранены для вратаря {display_name}")
                 else:
-                    has_jersey = 'jersey' in selection and selection['jersey'] in ['light', 'dark']
-                    has_team = 'team' in selection and selection['team'] in ['first', 'second']
+                    has_jersey = 'jersey' in selection and selection['jersey'] in ['light', 'dark', 'blue', 'yellow']
                     has_position = 'position' in selection and selection['position'] in ['forward', 'defender']
                     
-                    logger.info(f"🔍 Проверка для полевого игрока {display_name}: jersey={has_jersey}, team={has_team}, position={has_position}")
+                    logger.info(f"🔍 Проверка для полевого игрока {display_name}: jersey={has_jersey}, position={has_position}")
                     
-                    if has_jersey and has_team and has_position:
+                    if has_jersey and has_position:
                         logger.info(f"✅ Параметры сохранены для полевого игрока {display_name}")
                     else:
                         logger.warning(f"⚠️ НЕ все параметры выбраны для {display_name}")
@@ -253,7 +254,7 @@ def send_notifications(training_id):
             has_all_params = bool(
                 registration.jersey_type and (
                     registration.goalkeeper or 
-                    (registration.team_type and registration.position_type)
+                    registration.position_type
                 )
             )
             
@@ -270,13 +271,10 @@ def send_notifications(training_id):
                         params_changed = True
                         logger.info(f"🔄 Изменилась майка для вратаря {display_name}: {user_prefs.preferred_jersey_type} → {registration.jersey_type}")
                 else:
-                    # Для полевого игрока проверяем майку, команду и амплуа
+                    # Для полевого игрока проверяем майку и амплуа
                     if registration.jersey_type != user_prefs.preferred_jersey_type:
                         params_changed = True
                         logger.info(f"🔄 Изменилась майка для {display_name}: {user_prefs.preferred_jersey_type} → {registration.jersey_type}")
-                    if registration.team_type != user_prefs.preferred_team_type:
-                        params_changed = True
-                        logger.info(f"🔄 Изменилась команда для {display_name}: {user_prefs.preferred_team_type} → {registration.team_type}")
                     if registration.position_type != user_prefs.preferred_position_type:
                         params_changed = True
                         logger.info(f"🔄 Изменилось амплуа для {display_name}: {user_prefs.preferred_position_type} → {registration.position_type}")
@@ -294,11 +292,11 @@ def send_notifications(training_id):
             )
             
             logger.info(f"👤 Участник {display_name}: team_assigned={team_assigned}, has_all_params={has_all_params}, should_notify={should_notify}")
-            logger.info(f"   📋 Параметры: jersey={registration.jersey_type}, team={registration.team_type}, position={registration.position_type}, goalkeeper={registration.goalkeeper}")
+            logger.info(f"   📋 Параметры: jersey={registration.jersey_type}, position={registration.position_type}, goalkeeper={registration.goalkeeper}")
             
-            # Для вратарей проверяем только майку, для полевых игроков - майку, команду и амплуа
+            # Для вратарей проверяем только майку, для полевых игроков - майку и амплуа
             if should_notify and registration.jersey_type and (
-                registration.goalkeeper or (registration.team_type and registration.position_type)):
+                registration.goalkeeper or registration.position_type):
                 
                 # Проверяем, есть ли у игрока user_id (может ли он получить уведомление через Telegram)
                 if not registration.user_id:
@@ -311,19 +309,22 @@ def send_notifications(training_id):
                     continue
                 
                 # Формируем индивидуальное сообщение для участника
-                jersey_emoji = "⚪" if registration.jersey_type.value == 'light' else "⚫"
-                team_emoji = "1️⃣" if registration.team_type and registration.team_type.value == 'first' else "2️⃣"
+                jersey_emojis = {
+                    'light': '⚪',
+                    'dark': '⚫',
+                    'blue': '🔵',
+                    'yellow': '🟡'
+                }
+                jersey_emoji = jersey_emojis.get(registration.jersey_type.value, '👕')
                 
                 message = f"🏒 *Уведомление о тренировке*\n\n"
                 message += f"📅 Дата: {training_date}\n"
                 message += f"🎯 Ваша майка: {jersey_emoji}\n"
                 
-                # Добавляем команду и амплуа для полевых игроков
-                if not registration.goalkeeper and registration.team_type:
-                    message += f"👥 Ваша пятерка: {team_emoji}\n"
-                    if registration.position_type:
-                        position_text = "Нап" if registration.position_type.value == 'forward' else "Зщ"
-                        message += f"🏒 Ваше амплуа: {position_text}\n"
+                # Добавляем амплуа для полевых игроков
+                if not registration.goalkeeper and registration.position_type:
+                    position_text = "Нап" if registration.position_type.value == 'forward' else "Зщ"
+                    message += f"🏒 Ваше амплуа: {position_text}\n"
                 
                 message += f"👥 Всего участников: {len(training.registrations)}/{training.max_participants}"
                 
@@ -366,7 +367,6 @@ def send_notifications(training_id):
                         
                         user_prefs.preferred_jersey_type = registration.jersey_type
                         if not registration.goalkeeper:
-                            user_prefs.preferred_team_type = registration.team_type
                             user_prefs.preferred_position_type = registration.position_type
                         logger.info(f"💾 Обновлены предпочтения для {display_name}")
                     else:
@@ -387,7 +387,6 @@ def send_notifications(training_id):
                             
                             user_prefs.preferred_jersey_type = registration.jersey_type
                             if not registration.goalkeeper:
-                                user_prefs.preferred_team_type = registration.team_type
                                 user_prefs.preferred_position_type = registration.position_type
                             logger.info(f"💾 Обновлены предпочтения для игрока без Telegram аккаунта {display_name}")
                         else:
@@ -412,7 +411,6 @@ def send_notifications(training_id):
                         
                         user_prefs.preferred_jersey_type = registration.jersey_type
                         if not registration.goalkeeper:
-                            user_prefs.preferred_team_type = registration.team_type
                             user_prefs.preferred_position_type = registration.position_type
                         logger.info(f"💾 Обновлены предпочтения для игрока без Telegram аккаунта {display_name}")
                     else:
@@ -440,7 +438,7 @@ def send_notifications(training_id):
         else:
             return jsonify({
                 'success': True, 
-                'message': 'Все игроки распределены по командам и пятеркам!'
+                'message': 'Все игроки распределены по командам!'
             })
         
     except Exception as e:
@@ -565,7 +563,6 @@ def bulk_register_players(training_id):
                 # Применяем предпочтения пользователя
                 if user_prefs:
                     registration.jersey_type = user_prefs.preferred_jersey_type
-                    registration.team_type = user_prefs.preferred_team_type
                     registration.position_type = user_prefs.preferred_position_type
                 
                 db_session.add(registration)
@@ -817,6 +814,53 @@ def rename_participant(training_id, participant_id):
         
     except Exception as e:
         logger.error(f"Error renaming participant: {e}")
+        db_session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@web.route('/training/<int:training_id>/participant/<int:participant_id>/remember-preferences', methods=['POST'])
+@login_required
+def remember_participant_preferences(training_id, participant_id):
+    """Сохраняет выбранные параметры игрока (майка, амплуа) в предпочтения для последующих записей."""
+    try:
+        training = db_session.query(Training).get(training_id)
+        if not training:
+            return jsonify({'success': False, 'error': 'Training not found'}), 404
+        
+        registration = db_session.query(Registration)\
+            .filter_by(id=participant_id, training_id=training_id)\
+            .first()
+        
+        if not registration:
+            return jsonify({'success': False, 'error': 'Participant not found'}), 404
+        
+        data = request.get_json() or {}
+        jersey_type = data.get('jersey_type')
+        position_type = data.get('position_type')
+        
+        if jersey_type not in ('light', 'dark', 'blue', 'yellow') and jersey_type is not None:
+            return jsonify({'success': False, 'error': 'Invalid jersey_type'}), 400
+        if position_type not in ('forward', 'defender') and position_type is not None and not registration.goalkeeper:
+            return jsonify({'success': False, 'error': 'Invalid position_type'}), 400
+        
+        user_prefs = db_session.query(UserPreferences).filter_by(user_id=registration.user_id).first()
+        if not user_prefs:
+            user_prefs = UserPreferences(user_id=registration.user_id)
+            db_session.add(user_prefs)
+        
+        if jersey_type is not None:
+            user_prefs.preferred_jersey_type = JerseyType(jersey_type)
+        if not registration.goalkeeper and position_type is not None:
+            user_prefs.preferred_position_type = PositionType(position_type)
+        
+        db_session.commit()
+        
+        participant_name = registration.display_name or registration.username or 'Без имени'
+        return jsonify({
+            'success': True,
+            'message': f'Предпочтения для {participant_name} сохранены'
+        })
+    except Exception as e:
+        logger.error(f"Error saving participant preferences: {e}")
         db_session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 

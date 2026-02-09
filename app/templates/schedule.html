@@ -109,7 +109,6 @@
                                             <tr>
                                                 <th>Участник</th>
                                                 <th class="text-center">Цвет джерси</th>
-                                                <th class="text-center">Звено</th>
                                                 <th class="text-center">Амплуа</th>
                                                 <th class="text-center">Оплатил</th>
                                                 <th class="text-center">Действия</th>
@@ -482,8 +481,13 @@ function loadParticipants(trainingId) {
 // Функция для создания строки участника
 function createParticipantRow(participant, index, tbody, trainingId, isGoalkeeper) {
     const row = document.createElement('tr');
-    const lightChecked = (participant.jersey_type === 'light') ? 'checked' : '';
-    const darkChecked = (participant.jersey_type === 'dark') ? 'checked' : '';
+    row.setAttribute('data-participant-id', participant.id);
+    // При отображении используем сохранённые в записи или сохранённые предпочтения
+    const effectiveJersey = participant.jersey_type || participant.preferred_jersey_type || '';
+    const lightChecked = (effectiveJersey === 'light') ? 'checked' : '';
+    const darkChecked = (effectiveJersey === 'dark') ? 'checked' : '';
+    const blueChecked = (effectiveJersey === 'blue') ? 'checked' : '';
+    const yellowChecked = (effectiveJersey === 'yellow') ? 'checked' : '';
     const savedJerseyType = participant.jersey_type || '';
     
     
@@ -493,6 +497,7 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
             <td onclick="selectParticipant(${trainingId}, this.parentElement)" style="cursor: pointer;" data-username="${participant.username || ''}" data-goalkeeper="${participant.goalkeeper || false}">
                 <div>
                     <strong>${index + 1}. ${participant.name}</strong>
+                    <button type="button" class="btn btn-sm btn-outline-secondary ms-2 remember-prefs-btn" data-is-goalkeeper="true" onclick="event.stopPropagation(); rememberParticipantPreferences(${trainingId}, ${participant.id}, true)" title="Сохранить майку для последующих записей" ${effectiveJersey ? '' : 'disabled'}>Запомнить</button>
                     ${participant.team_assigned ? '<span class="badge bg-success ms-2">✓ Команда назначена</span>' : ''}
                     <br>
                     <small class="text-muted">
@@ -501,7 +506,7 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                 </div>
             </td>
             <td class="text-center">
-                <div class="d-flex flex-column align-items-center gap-2">
+                <div class="jersey-options-grid">
                     <div class="form-check">
                         <input class="form-check-input" type="radio" 
                                name="jersey-type-${trainingId}-${participant.name}" 
@@ -513,7 +518,7 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                                data-saved-jersey="${savedJerseyType}"
                                onchange="checkSelectionChanges(${trainingId})">
                         <label class="form-check-label ms-1" for="light-${trainingId}-${index}">
-                            <img src="/static/white_tshirt.svg" alt="Светлая майка" class="jersey-icon">
+                            <span class="jersey-circle jersey-circle--light" title="Белая"></span>
                         </label>
                     </div>
                     <div class="form-check">
@@ -527,7 +532,7 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                                data-saved-jersey="${savedJerseyType}"
                                onchange="checkSelectionChanges(${trainingId})">
                         <label class="form-check-label ms-1" for="dark-${trainingId}-${index}">
-                            <img src="/static/black_tshirt.svg" alt="Темная майка" class="jersey-icon">
+                            <span class="jersey-circle jersey-circle--dark" title="Чёрная"></span>
                         </label>
                     </div>
                 </div>
@@ -541,18 +546,17 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
             </td>
         `;
     } else {
-        // Создаем строку для полевого игрока (майки + команды + амплуа)
-        const firstChecked = participant.team_type === 'first' ? 'checked' : '';
-        const secondChecked = participant.team_type === 'second' ? 'checked' : '';
-        const savedTeamType = participant.team_type || '';
-        const forwardChecked = participant.position_type === 'forward' ? 'checked' : '';
-        const defenderChecked = participant.position_type === 'defender' ? 'checked' : '';
+        // Создаем строку для полевого игрока (майки + амплуа)
+        const effectivePosition = participant.position_type || participant.preferred_position_type || '';
+        const forwardChecked = (effectivePosition === 'forward') ? 'checked' : '';
+        const defenderChecked = (effectivePosition === 'defender') ? 'checked' : '';
         const savedPositionType = participant.position_type || '';
         
         row.innerHTML = `
             <td onclick="selectParticipant(${trainingId}, this.parentElement)" style="cursor: pointer;" data-username="${participant.username || ''}" data-goalkeeper="${participant.goalkeeper || false}">
                 <div>
                     <strong>${index + 1}. ${participant.name}</strong>
+                    <button type="button" class="btn btn-sm btn-outline-secondary ms-2 remember-prefs-btn" data-is-goalkeeper="false" onclick="event.stopPropagation(); rememberParticipantPreferences(${trainingId}, ${participant.id}, false)" title="Сохранить майку и амплуа для последующих записей" ${(effectiveJersey && effectivePosition) ? '' : 'disabled'}>Запомнить</button>
                     ${participant.team_assigned ? '<span class="badge bg-success ms-2">✓ Команда назначена</span>' : ''}
                     <br>
                     <small class="text-muted">
@@ -561,7 +565,7 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                 </div>
             </td>
             <td class="text-center">
-                <div class="d-flex flex-column align-items-center gap-2">
+                <div class="jersey-options-grid">
                     <div class="form-check">
                         <input class="form-check-input" type="radio" 
                                name="jersey-type-${trainingId}-${participant.name}" 
@@ -573,7 +577,7 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                                data-saved-jersey="${savedJerseyType}"
                                onchange="checkSelectionChanges(${trainingId})">
                         <label class="form-check-label ms-1" for="light-${trainingId}-${index}">
-                            <img src="/static/white_tshirt.svg" alt="Светлая майка" class="jersey-icon">
+                            <span class="jersey-circle jersey-circle--light" title="Белая"></span>
                         </label>
                     </div>
                     <div class="form-check">
@@ -587,39 +591,35 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                                data-saved-jersey="${savedJerseyType}"
                                onchange="checkSelectionChanges(${trainingId})">
                         <label class="form-check-label ms-1" for="dark-${trainingId}-${index}">
-                            <img src="/static/black_tshirt.svg" alt="Темная майка" class="jersey-icon">
-                        </label>
-                    </div>
-                </div>
-            </td>
-            <td class="text-center">
-                <div class="d-flex flex-column align-items-center gap-2">
-                    <div class="form-check">
-                        <input class="form-check-input" type="radio" 
-                               name="team-type-${trainingId}-${participant.name}" 
-                               id="first-${trainingId}-${index}" 
-                               value="first" 
-                               data-participant="${participant.name}"
-                               data-participant-id="${participant.id}"
-                               ${firstChecked}
-                               data-saved-team="${savedTeamType}"
-                               onchange="checkSelectionChanges(${trainingId})">
-                        <label class="form-check-label ms-1" for="first-${trainingId}-${index}">
-                            1️⃣
+                            <span class="jersey-circle jersey-circle--dark" title="Чёрная"></span>
                         </label>
                     </div>
                     <div class="form-check">
                         <input class="form-check-input" type="radio" 
-                               name="team-type-${trainingId}-${participant.name}" 
-                               id="second-${trainingId}-${index}" 
-                               value="second" 
+                               name="jersey-type-${trainingId}-${participant.name}" 
+                               id="blue-${trainingId}-${index}" 
+                               value="blue" 
                                data-participant="${participant.name}"
                                data-participant-id="${participant.id}"
-                               ${secondChecked}
-                               data-saved-team="${savedTeamType}"
+                               ${blueChecked}
+                               data-saved-jersey="${savedJerseyType}"
                                onchange="checkSelectionChanges(${trainingId})">
-                        <label class="form-check-label ms-1" for="second-${trainingId}-${index}">
-                            2️⃣
+                        <label class="form-check-label ms-1" for="blue-${trainingId}-${index}">
+                            <span class="jersey-circle jersey-circle--blue" title="Синяя"></span>
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" 
+                               name="jersey-type-${trainingId}-${participant.name}" 
+                               id="yellow-${trainingId}-${index}" 
+                               value="yellow" 
+                               data-participant="${participant.name}"
+                               data-participant-id="${participant.id}"
+                               ${yellowChecked}
+                               data-saved-jersey="${savedJerseyType}"
+                               onchange="checkSelectionChanges(${trainingId})">
+                        <label class="form-check-label ms-1" for="yellow-${trainingId}-${index}">
+                            <span class="jersey-circle jersey-circle--yellow" title="Жёлтая"></span>
                         </label>
                     </div>
                 </div>
@@ -673,6 +673,44 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
     tbody.appendChild(row);
 }
 
+// Сохранить выбранные параметры игрока (майка, амплуа) для последующих записей
+function rememberParticipantPreferences(trainingId, participantId, isGoalkeeper) {
+    const goalkeepersTbody = document.getElementById(`goalkeepers-tbody-${trainingId}`);
+    const participantsTbody = document.getElementById(`participants-tbody-${trainingId}`);
+    let row = null;
+    if (goalkeepersTbody) row = goalkeepersTbody.querySelector(`tr[data-participant-id="${participantId}"]`);
+    if (!row && participantsTbody) row = participantsTbody.querySelector(`tr[data-participant-id="${participantId}"]`);
+    if (!row) {
+        alert('Строка участника не найдена');
+        return;
+    }
+    const jerseyRadio = row.querySelector('input[name^="jersey-type"]:checked');
+    const jersey_type = jerseyRadio ? jerseyRadio.value : null;
+    let position_type = null;
+    if (!isGoalkeeper) {
+        const positionRadio = row.querySelector('input[name^="position-type"]:checked');
+        position_type = positionRadio ? positionRadio.value : null;
+    }
+    fetch(`/training/${trainingId}/participant/${participantId}/remember-preferences`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ jersey_type: jersey_type, position_type: position_type })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            if (typeof alert !== 'undefined') alert('✅ ' + data.message);
+        } else {
+            alert('Ошибка: ' + (data.error || 'Не удалось сохранить'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('Ошибка при сохранении предпочтений');
+    });
+}
+
 // Функция для проверки изменений в выборе маек и команд
 function checkSelectionChanges(trainingId) {
     const distributeButton = document.getElementById(`distribute-teams-${trainingId}`);
@@ -686,7 +724,6 @@ function checkSelectionChanges(trainingId) {
     console.log(`checkSelectionChanges: participants=${participantRows.length}, goalkeepers=${goalkeeperRows.length}`);
     
     let allJerseysSelected = true;
-    let allTeamsSelected = true;
     let allPositionsSelected = true;
     let hasChanges = false;
     const participantSelections = {};
@@ -699,8 +736,8 @@ function checkSelectionChanges(trainingId) {
         participantRows.forEach((row, index) => {
             const lightRadio = row.querySelector(`input[id="light-${trainingId}-${index}"]`);
             const darkRadio = row.querySelector(`input[id="dark-${trainingId}-${index}"]`);
-            const firstRadio = row.querySelector(`input[id="first-${trainingId}-${index}"]`);
-            const secondRadio = row.querySelector(`input[id="second-${trainingId}-${index}"]`);
+            const blueRadio = row.querySelector(`input[id="blue-${trainingId}-${index}"]`);
+            const yellowRadio = row.querySelector(`input[id="yellow-${trainingId}-${index}"]`);
             const forwardRadio = row.querySelector(`input[id="forward-${trainingId}-${index}"]`);
             const defenderRadio = row.querySelector(`input[id="defender-${trainingId}-${index}"]`);
             const participantName = lightRadio ? lightRadio.getAttribute('data-participant') : 'Unknown';
@@ -708,49 +745,36 @@ function checkSelectionChanges(trainingId) {
         
         // Получаем сохраненные значения из атрибутов data
         const savedJerseyType = lightRadio ? lightRadio.getAttribute('data-saved-jersey') : '';
-        const savedTeamType = firstRadio ? firstRadio.getAttribute('data-saved-team') : '';
         const savedPositionType = forwardRadio ? forwardRadio.getAttribute('data-saved-position') : '';
         
         let jerseySelected = false;
-        let teamSelected = false;
         let positionSelected = false;
         let participantChanged = false;
         
         // Проверяем выбор майки
-        if (lightRadio.checked) {
+        if (lightRadio && lightRadio.checked) {
             participantSelections[participantName] = { jersey: 'light' };
             jerseySelected = true;
             if (savedJerseyType !== 'light') {
                 participantChanged = true;
             }
-        } else if (darkRadio.checked) {
+        } else if (darkRadio && darkRadio.checked) {
             participantSelections[participantName] = { jersey: 'dark' };
             jerseySelected = true;
             if (savedJerseyType !== 'dark') {
                 participantChanged = true;
             }
-        }
-        
-        // Проверяем выбор команды для полевых игроков
-        if (firstRadio && secondRadio) {
-            if (firstRadio.checked) {
-                if (!participantSelections[participantName]) {
-                    participantSelections[participantName] = {};
-                }
-                participantSelections[participantName].team = 'first';
-                teamSelected = true;
-                if (savedTeamType !== 'first') {
-                    participantChanged = true;
-                }
-            } else if (secondRadio.checked) {
-                if (!participantSelections[participantName]) {
-                    participantSelections[participantName] = {};
-                }
-                participantSelections[participantName].team = 'second';
-                teamSelected = true;
-                if (savedTeamType !== 'second') {
-                    participantChanged = true;
-                }
+        } else if (blueRadio && blueRadio.checked) {
+            participantSelections[participantName] = { jersey: 'blue' };
+            jerseySelected = true;
+            if (savedJerseyType !== 'blue') {
+                participantChanged = true;
+            }
+        } else if (yellowRadio && yellowRadio.checked) {
+            participantSelections[participantName] = { jersey: 'yellow' };
+            jerseySelected = true;
+            if (savedJerseyType !== 'yellow') {
+                participantChanged = true;
             }
         }
         
@@ -778,12 +802,14 @@ function checkSelectionChanges(trainingId) {
         }
         
         if (!jerseySelected) allJerseysSelected = false;
-        if (!teamSelected) allTeamsSelected = false;
         if (!positionSelected) allPositionsSelected = false;
         if (participantChanged) {
             hasChanges = true;
             changedParticipants.push(participantName);
         }
+        // Кнопка «Запомнить» активна только когда выбраны майка и амплуа
+        const rememberBtn = row.querySelector('.remember-prefs-btn');
+        if (rememberBtn) rememberBtn.disabled = !(jerseySelected && positionSelected);
     });
     
     // Проверяем вратарей
@@ -799,14 +825,14 @@ function checkSelectionChanges(trainingId) {
         let jerseySelected = false;
         let participantChanged = false;
         
-        // Проверяем выбор майки
-        if (lightRadio.checked) {
+        // Проверяем выбор майки (у вратарей только светлая и тёмная)
+        if (lightRadio && lightRadio.checked) {
             participantSelections[participantName] = { jersey: 'light' };
             jerseySelected = true;
             if (savedJerseyType !== 'light') {
                 participantChanged = true;
             }
-        } else if (darkRadio.checked) {
+        } else if (darkRadio && darkRadio.checked) {
             participantSelections[participantName] = { jersey: 'dark' };
             jerseySelected = true;
             if (savedJerseyType !== 'dark') {
@@ -819,11 +845,14 @@ function checkSelectionChanges(trainingId) {
             hasChanges = true;
             changedParticipants.push(participantName);
         }
+        // Кнопка «Запомнить» у вратаря активна только когда выбрана майка
+        const rememberBtn = row.querySelector('.remember-prefs-btn');
+        if (rememberBtn) rememberBtn.disabled = !jerseySelected;
     });
     
     // Активируем общую кнопку распределения
-    // Кнопка активна если все майки выбраны И (нет полевых игроков ИЛИ у всех полевых игроков выбраны команды и амплуа)
-    const canDistribute = allJerseysSelected && (!hasFieldPlayers || (allTeamsSelected && allPositionsSelected));
+    // Кнопка активна если все майки выбраны И (нет полевых игроков ИЛИ у всех полевых игроков выбрано амплуа)
+    const canDistribute = allJerseysSelected && (!hasFieldPlayers || allPositionsSelected);
     
     console.log(`allJerseysSelected: ${allJerseysSelected}, allTeamsSelected: ${allTeamsSelected}, hasFieldPlayers: ${hasFieldPlayers}, canDistribute: ${canDistribute}`);
     
@@ -936,19 +965,17 @@ function distributeTeams(trainingId) {
                 participantRows.forEach((row, index) => {
                     const lightRadio = row.querySelector(`input[id="light-${trainingId}-${index}"]`);
                     const darkRadio = row.querySelector(`input[id="dark-${trainingId}-${index}"]`);
-                    const firstRadio = row.querySelector(`input[id="first-${trainingId}-${index}"]`);
-                    const secondRadio = row.querySelector(`input[id="second-${trainingId}-${index}"]`);
+                    const blueRadio = row.querySelector(`input[id="blue-${trainingId}-${index}"]`);
+                    const yellowRadio = row.querySelector(`input[id="yellow-${trainingId}-${index}"]`);
                     
                     if (lightRadio && lightRadio.checked) {
                         lightRadio.setAttribute('data-saved-jersey', 'light');
                     } else if (darkRadio && darkRadio.checked) {
                         darkRadio.setAttribute('data-saved-jersey', 'dark');
-                    }
-                    
-                    if (firstRadio && firstRadio.checked) {
-                        firstRadio.setAttribute('data-saved-team', 'first');
-                    } else if (secondRadio && secondRadio.checked) {
-                        secondRadio.setAttribute('data-saved-team', 'second');
+                    } else if (blueRadio && blueRadio.checked) {
+                        blueRadio.setAttribute('data-saved-jersey', 'blue');
+                    } else if (yellowRadio && yellowRadio.checked) {
+                        yellowRadio.setAttribute('data-saved-jersey', 'yellow');
                     }
                     
                     const forwardRadio = row.querySelector(`input[id="forward-${trainingId}-${index}"]`);
@@ -968,11 +995,17 @@ function distributeTeams(trainingId) {
                 goalkeeperRows.forEach((row, index) => {
                     const lightRadio = row.querySelector(`input[id="light-${trainingId}-${index}"]`);
                     const darkRadio = row.querySelector(`input[id="dark-${trainingId}-${index}"]`);
+                    const blueRadio = row.querySelector(`input[id="blue-${trainingId}-${index}"]`);
+                    const yellowRadio = row.querySelector(`input[id="yellow-${trainingId}-${index}"]`);
                     
                     if (lightRadio && lightRadio.checked) {
                         lightRadio.setAttribute('data-saved-jersey', 'light');
                     } else if (darkRadio && darkRadio.checked) {
                         darkRadio.setAttribute('data-saved-jersey', 'dark');
+                    } else if (blueRadio && blueRadio.checked) {
+                        blueRadio.setAttribute('data-saved-jersey', 'blue');
+                    } else if (yellowRadio && yellowRadio.checked) {
+                        yellowRadio.setAttribute('data-saved-jersey', 'yellow');
                     }
                 });
             }
@@ -1017,16 +1050,16 @@ function distributeTeams(trainingId) {
                 participantRows.forEach((row) => {
                     const lightRadio = row.querySelector('input[type="radio"][value="light"]');
                     const darkRadio = row.querySelector('input[type="radio"][value="dark"]');
-                    const firstRadio = row.querySelector('input[type="radio"][value="first"]');
-                    const secondRadio = row.querySelector('input[type="radio"][value="second"]');
+                    const blueRadio = row.querySelector('input[type="radio"][value="blue"]');
+                    const yellowRadio = row.querySelector('input[type="radio"][value="yellow"]');
                     const forwardRadio = row.querySelector('input[type="radio"][value="forward"]');
                     const defenderRadio = row.querySelector('input[type="radio"][value="defender"]');
                     
-                    const hasJersey = (lightRadio && lightRadio.checked) || (darkRadio && darkRadio.checked);
-                    const hasTeam = (firstRadio && firstRadio.checked) || (secondRadio && secondRadio.checked);
+                    const hasJersey = (lightRadio && lightRadio.checked) || (darkRadio && darkRadio.checked) || 
+                                      (blueRadio && blueRadio.checked) || (yellowRadio && yellowRadio.checked);
                     const hasPosition = (forwardRadio && forwardRadio.checked) || (defenderRadio && defenderRadio.checked);
                     
-                    if (hasJersey && hasTeam && hasPosition) {
+                    if (hasJersey && hasPosition) {
                         // Находим первую ячейку с именем игрока
                         const nameCell = row.querySelector('td:first-child');
                         if (nameCell) {
@@ -1504,19 +1537,25 @@ function loadPastParticipants(trainingId) {
             if (data.participants.length > 0) {
                 let html = '<div class="row">';
                 
-                // Группируем участников по командам
+                // Группируем участников по цветам маек
                 const goalkeepers = data.participants.filter(p => p.goalkeeper);
-                const lightFirst = data.participants.filter(p => !p.goalkeeper && p.jersey_type === 'light' && p.team_type === 'first');
-                const darkFirst = data.participants.filter(p => !p.goalkeeper && p.jersey_type === 'dark' && p.team_type === 'first');
-                const lightSecond = data.participants.filter(p => !p.goalkeeper && p.jersey_type === 'light' && p.team_type === 'second');
-                const darkSecond = data.participants.filter(p => !p.goalkeeper && p.jersey_type === 'dark' && p.team_type === 'second');
-                const unassigned = data.participants.filter(p => !p.goalkeeper && (!p.jersey_type || !p.team_type));
+                const lightPlayers = data.participants.filter(p => !p.goalkeeper && p.jersey_type === 'light');
+                const darkPlayers = data.participants.filter(p => !p.goalkeeper && p.jersey_type === 'dark');
+                const bluePlayers = data.participants.filter(p => !p.goalkeeper && p.jersey_type === 'blue');
+                const yellowPlayers = data.participants.filter(p => !p.goalkeeper && p.jersey_type === 'yellow');
+                const unassigned = data.participants.filter(p => !p.goalkeeper && (!p.jersey_type || !p.position_type));
                 
                 // Вратари
                 if (goalkeepers.length > 0) {
                     html += '<div class="col-md-6 mb-3"><h6>🥅 Вратари</h6><ul class="list-group">';
                     goalkeepers.forEach(participant => {
-                        const jerseyEmoji = participant.jersey_type === 'light' ? '⚪' : '⚫';
+                        const jerseyEmojis = {
+                            'light': '⚪',
+                            'dark': '⚫',
+                            'blue': '🔵',
+                            'yellow': '🟡'
+                        };
+                        const jerseyEmoji = jerseyEmojis[participant.jersey_type] || '👕';
                         html += `<li class="list-group-item">
                             ${participant.name} ${jerseyEmoji}
                         </li>`;
@@ -1524,10 +1563,10 @@ function loadPastParticipants(trainingId) {
                     html += '</ul></div>';
                 }
                 
-                // Команды
-                if (lightFirst.length > 0) {
-                    html += '<div class="col-md-6 mb-3"><h6>⚪ 1-ая пятерка (светлые)</h6><ul class="list-group">';
-                    lightFirst.forEach(participant => {
+                // Игроки по цветам маек
+                if (lightPlayers.length > 0) {
+                    html += '<div class="col-md-6 mb-3"><h6>⚪ Белые</h6><ul class="list-group">';
+                    lightPlayers.forEach(participant => {
                         const paidStatus = participant.paid ? '✅' : '❌';
                         const paidButton = participant.paid ? '' : `<button class="btn btn-sm btn-success ms-2" onclick="markParticipantPaid(${trainingId}, ${participant.id}, '${participant.name}')" title="Отметить как оплатившего">Оплатил</button>`;
                         html += `<li class="list-group-item d-flex justify-content-between align-items-center">
@@ -1541,9 +1580,9 @@ function loadPastParticipants(trainingId) {
                     html += '</ul></div>';
                 }
                 
-                if (darkFirst.length > 0) {
-                    html += '<div class="col-md-6 mb-3"><h6>⚫ 1-ая пятерка (темные)</h6><ul class="list-group">';
-                    darkFirst.forEach(participant => {
+                if (darkPlayers.length > 0) {
+                    html += '<div class="col-md-6 mb-3"><h6>⚫ Черные</h6><ul class="list-group">';
+                    darkPlayers.forEach(participant => {
                         const paidStatus = participant.paid ? '✅' : '❌';
                         const paidButton = participant.paid ? '' : `<button class="btn btn-sm btn-success ms-2" onclick="markParticipantPaid(${trainingId}, ${participant.id}, '${participant.name}')" title="Отметить как оплатившего">Оплатил</button>`;
                         html += `<li class="list-group-item d-flex justify-content-between align-items-center">
@@ -1557,9 +1596,9 @@ function loadPastParticipants(trainingId) {
                     html += '</ul></div>';
                 }
                 
-                if (lightSecond.length > 0) {
-                    html += '<div class="col-md-6 mb-3"><h6>⚪ 2-ая пятерка (светлые)</h6><ul class="list-group">';
-                    lightSecond.forEach(participant => {
+                if (bluePlayers.length > 0) {
+                    html += '<div class="col-md-6 mb-3"><h6>🔵 Синие</h6><ul class="list-group">';
+                    bluePlayers.forEach(participant => {
                         const paidStatus = participant.paid ? '✅' : '❌';
                         const paidButton = participant.paid ? '' : `<button class="btn btn-sm btn-success ms-2" onclick="markParticipantPaid(${trainingId}, ${participant.id}, '${participant.name}')" title="Отметить как оплатившего">Оплатил</button>`;
                         html += `<li class="list-group-item d-flex justify-content-between align-items-center">
@@ -1573,9 +1612,9 @@ function loadPastParticipants(trainingId) {
                     html += '</ul></div>';
                 }
                 
-                if (darkSecond.length > 0) {
-                    html += '<div class="col-md-6 mb-3"><h6>⚫ 2-ая пятерка (темные)</h6><ul class="list-group">';
-                    darkSecond.forEach(participant => {
+                if (yellowPlayers.length > 0) {
+                    html += '<div class="col-md-6 mb-3"><h6>🟡 Желтые</h6><ul class="list-group">';
+                    yellowPlayers.forEach(participant => {
                         const paidStatus = participant.paid ? '✅' : '❌';
                         const paidButton = participant.paid ? '' : `<button class="btn btn-sm btn-success ms-2" onclick="markParticipantPaid(${trainingId}, ${participant.id}, '${participant.name}')" title="Отметить как оплатившего">Оплатил</button>`;
                         html += `<li class="list-group-item d-flex justify-content-between align-items-center">
@@ -1845,13 +1884,37 @@ function sendWeeklyPost() {
     cursor: pointer;
 }
 
-.jersey-icon {
-    width: 24px;
-    height: 24px;
-    transition: transform 0.2s ease;
+.jersey-options-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.25rem 0.5rem;
+    justify-items: center;
+    margin: 0 auto;
 }
 
-.form-check-input:checked + .form-check-label .jersey-icon {
+.jersey-circle {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s ease;
+}
+.jersey-circle--light {
+    background: #f5f5f5;
+    border-color: #ccc;
+}
+.jersey-circle--dark {
+    background: #333;
+}
+.jersey-circle--blue {
+    background: #2196F3;
+}
+.jersey-circle--yellow {
+    background: #FFEB3B;
+    border-color: #e0c000;
+}
+.form-check-input:checked + .form-check-label .jersey-circle {
     transform: scale(1.2);
 }
 
