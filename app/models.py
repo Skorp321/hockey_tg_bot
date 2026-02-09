@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, ForeignKey, Enum, Boolean, Text, TypeDecorator
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, ForeignKey, Enum, Boolean, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 import enum
@@ -8,41 +8,33 @@ import json
 Base = declarative_base()
 
 
-class EnumByValueOrName(TypeDecorator):
-    """Enum: в БД храним value (lowercase), при чтении принимаем и value, и name (для старых записей)."""
-    impl = String(20)
-    cache_ok = True
+class _EnumByValueOrName(Enum):
+    """Enum: в БД пишем value (lowercase), при чтении принимаем и value, и name (FORWARD/forward)."""
 
-    def __init__(self, enum_class):
-        self._enum_class = enum_class
-        super().__init__()
-
-    def process_bind_param(self, value, dialect):
-        if value is None:
-            return None
-        if isinstance(value, self._enum_class):
-            return value.value
-        return value
-
-    def process_result_value(self, value, dialect):
-        if value is None:
-            return None
-        if isinstance(value, self._enum_class):
-            return value
-        s = (value if isinstance(value, str) else str(value)).strip()
-        if not s:
+    def _object_value_for_elem(self, elem: str):
+        if elem is None:
             return None
         try:
-            return self._enum_class(s)  # по value: 'forward'
-        except ValueError:
-            pass
-        try:
-            return self._enum_class[s]  # по name: 'FORWARD'
+            return self._object_lookup[elem]
         except KeyError:
-            raise LookupError(
-                f"{s!r} is not among the defined enum values. "
-                f"Possible values: {[e.value for e in self._enum_class]}"
-            )
+            pass
+        # Пробуем по имени (для старых записей: 'FORWARD', 'LIGHT' и т.д.)
+        try:
+            enum_class = self.enum_class
+            return enum_class[elem]
+        except (KeyError, TypeError):
+            pass
+        raise LookupError(
+            "'%s' is not among the defined enum values. "
+            "Possible values: %s" % (elem, [e.value for e in self.enum_class])
+        )
+
+
+def _enum_by_value_or_name(enum_class):
+    return _EnumByValueOrName(
+        enum_class,
+        values_callable=lambda x: [e.value for e in x],
+    )
 
 
 class JerseyType(enum.Enum):
@@ -96,8 +88,8 @@ class Registration(Base):
     username = Column(String(100))
     display_name = Column(String(100), nullable=True)  # Отображаемое имя игрока
     registered_at = Column(DateTime, default=datetime.now, nullable=False)
-    jersey_type = Column(EnumByValueOrName(JerseyType), nullable=True)  # Поле для типа майки
-    position_type = Column(EnumByValueOrName(PositionType), nullable=True)  # Поле для амплуа (Нап/Зщ)
+    jersey_type = Column(_enum_by_value_or_name(JerseyType), nullable=True)  # Поле для типа майки
+    position_type = Column(_enum_by_value_or_name(PositionType), nullable=True)  # Поле для амплуа (Нап/Зщ)
     goalkeeper = Column(Boolean, default=False, nullable=False)  # Поле для обозначения вратаря
     paid = Column(Boolean, default=False, nullable=False)  # Поле для отметки "Оплатил тренировку"
     last_payment_reminder = Column(DateTime, nullable=True)  # Время последнего напоминания об оплате
@@ -123,8 +115,8 @@ class UserPreferences(Base):
     
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, nullable=False, unique=True)
-    preferred_jersey_type = Column(EnumByValueOrName(JerseyType), nullable=True)  # Предпочтительный цвет майки
-    preferred_position_type = Column(EnumByValueOrName(PositionType), nullable=True)  # Предпочтительное амплуа
+    preferred_jersey_type = Column(_enum_by_value_or_name(JerseyType), nullable=True)  # Предпочтительный цвет майки
+    preferred_position_type = Column(_enum_by_value_or_name(PositionType), nullable=True)  # Предпочтительное амплуа
     display_name = Column(String(100), nullable=True)  # Последнее переименованное имя пользователя
     goalkeeper = Column(Boolean, default=False, nullable=False)  # Предпочтение быть вратарем
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
