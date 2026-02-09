@@ -13,7 +13,7 @@ __pycache__/
 
 # Backups
 backups/
-*.sql
+
 *.sql.gz
 
 # IDE
