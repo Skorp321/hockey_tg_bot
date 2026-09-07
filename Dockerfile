@@ -4,10 +4,9 @@ FROM python:3.10-slim
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем зависимости для сборки
+# curl нужен healthcheck'у в docker-compose.
+# gcc/libpq-dev больше не требуются: psycopg2 заменён на asyncpg с колёсами.
 RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,12 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем код приложения
 COPY . .
 
-# Создаем директорию для базы данных
-RUN mkdir -p /app/instance
-
 # Устанавливаем переменные окружения
 ENV PYTHONUNBUFFERED=1
-ENV FLASK_APP=run.py
 
 # Открываем порты
 EXPOSE 5000

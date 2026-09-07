@@ -54,7 +54,7 @@
 │  ┌─────────────────────────────────────────────────────────┐      │
 │  │  Docker Container: training_bot                         │      │
 │  │  ├─ Python 3.10                                         │      │
-│  │  ├─ Flask Web Server (port 5000)                        │      │
+│  │  ├─ FastAPI Web Server (port 5000)                      │      │
 │  │  ├─ Telegram Bot                                        │      │
 │  │  └─ Background tasks                                    │      │
 │  └─────────────────────────────────────────────────────────┘      │

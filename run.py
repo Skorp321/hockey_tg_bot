@@ -1,8 +1,8 @@
 import asyncio
 import signal
 from app import create_app
+from app.database import init_models
 from app.bot.handlers import start_bot, check_payment_reminders
-from app.bot.message_scheduler import start_message_scheduler
 from hypercorn.asyncio import serve
 from hypercorn.config import Config as HyperConfig
 
@@ -26,8 +26,13 @@ async def main():
     # Получаем текущий event loop
     loop = asyncio.get_event_loop()
     
-    # Создаем Flask приложение
+    # Создаем FastAPI приложение
     app = create_app()
+
+    # Создаём таблицы до старта бота: раньше это делалось внутри create_app(),
+    # а lifespan сработал бы только при serve(), то есть уже после запуска бота.
+    await init_models()
+
     config = HyperConfig()
     config.bind = ["0.0.0.0:5000"]
     config.use_reloader = False
@@ -52,7 +57,11 @@ async def main():
                 print("❌ Не удалось запустить бота после всех попыток")
                 # Продолжаем работу только с веб-сервером
                 bot_app = None
-    
+
+    # Отдаём бота веб-слою: /send-weekly-post использует уже запущенный экземпляр
+    app.state.bot_app = bot_app
+    app.state.bot = bot_app.bot if bot_app else None
+
     # Запускаем фоновую задачу для проверки напоминаний об оплате
     async def payment_reminder_task():
         """Фоновая задача для проверки напоминаний об оплате"""
