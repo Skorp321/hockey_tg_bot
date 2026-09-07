@@ -48,7 +48,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            cd /home/skorp/hockey
+            cd ${{ secrets.DEPLOY_PATH }}
             
             echo "🔄 Pulling latest changes..."
             git pull origin main
@@ -86,7 +86,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            cd /home/skorp/hockey
+            cd ${{ secrets.DEPLOY_PATH }}
             
             echo "🔍 Checking container status..."
             docker-compose ps
