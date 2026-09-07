@@ -61,7 +61,7 @@
 │                         ↕                                           │
 │  ┌─────────────────────────────────────────────────────────┐      │
 │  │  Docker Container: training_bot_db                      │      │
-│  │  ├─ PostgreSQL 13                                       │      │
+│  │  ├─ PostgreSQL 16                                       │      │
 │  │  ├─ Persistent Volume                                   │      │
 │  │  └─ Health checks                                       │      │
 │  └─────────────────────────────────────────────────────────┘      │
