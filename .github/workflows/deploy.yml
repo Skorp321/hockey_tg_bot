@@ -52,7 +52,19 @@ jobs:
             
             echo "🔄 Pulling latest changes..."
             git pull origin main
-            
+
+            echo "🗄️  Проверка версии БД (миграция PostgreSQL 13 -> 16, если нужна)..."
+            # Каталоги данных мажорных версий PostgreSQL несовместимы, поэтому смены
+            # тега образа мало - данные надо перенести дампом до старта приложения.
+            # Скрипт идемпотентен: на уже мигрированной базе сразу выходит с кодом 0.
+            # SKIP_APP_START=1 - приложение поднимается следующим шагом.
+            if ! AUTO_YES=1 SKIP_APP_START=1 bash scripts/upgrade-postgres-16.sh < /dev/null; then
+              echo "❌ Миграция БД не удалась. Деплой остановлен, приложение не обновлялось."
+              echo "   Данные сохранены: дамп в backups/ и копия volume для отката."
+              echo "   Команды отката напечатаны выше в логе миграции."
+              exit 1
+            fi
+
             echo "📦 Building and starting containers..."
             docker-compose down
             docker-compose build --no-cache

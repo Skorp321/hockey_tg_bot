@@ -34,6 +34,7 @@
 │  │  ├─ Connect to server via SSH                            │    │
 │  │  ├─ cd /home/deploy/hockey                               │    │
 │  │  ├─ git pull origin main                                 │    │
+│  │  ├─ upgrade-postgres-16.sh (миграция БД, идемпотентно)   │    │
 │  │  ├─ docker-compose down                                  │    │
 │  │  ├─ docker-compose build --no-cache                      │    │
 │  │  ├─ docker-compose up -d                                 │    │

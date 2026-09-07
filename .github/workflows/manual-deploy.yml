@@ -39,6 +39,15 @@ jobs:
             cd ${{ secrets.DEPLOY_PATH }}
             echo "🔄 Deploying to production..."
             git pull origin main
+
+            echo "🗄️  Проверка версии БД (миграция PostgreSQL 13 -> 16, если нужна)..."
+            # Идемпотентно: на уже мигрированной базе сразу выходит с кодом 0.
+            if ! AUTO_YES=1 SKIP_APP_START=1 bash scripts/upgrade-postgres-16.sh < /dev/null; then
+              echo "❌ Миграция БД не удалась. Деплой остановлен."
+              echo "   Данные сохранены: дамп в backups/ и копия volume для отката."
+              exit 1
+            fi
+
             docker-compose down
             docker-compose build --no-cache
             docker-compose up -d
@@ -69,7 +78,28 @@ jobs:
             fi
             
             git log --oneline -5
-            
+
+            # Данные PostgreSQL несовместимы между мажорными версиями в ОБЕ стороны.
+            # Если откат вернул docker-compose.yml на образ старее, чем формат данных,
+            # БД не поднимется ("database files are incompatible with server").
+            # Понижение требует восстановления из дампа, автоматически это делать нельзя.
+            VOLUME="${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}_postgres_data"
+            DATA_VER=$(docker run --rm -v "${VOLUME}":/d alpine cat /d/PG_VERSION 2>/dev/null | tr -d '[:space:]' || echo "")
+            IMAGE_VER=$(sed -n 's/.*image:[[:space:]]*postgres:\([0-9]\{1,\}\).*/\1/p' docker-compose.yml | head -1)
+
+            if [ -n "$DATA_VER" ] && [ -n "$IMAGE_VER" ] && [ "$DATA_VER" != "$IMAGE_VER" ]; then
+              echo "❌ Автоматический откат остановлен: несовместимость PostgreSQL."
+              echo "   Формат данных в volume '${VOLUME}': PostgreSQL ${DATA_VER}"
+              echo "   docker-compose.yml после отката требует: PostgreSQL ${IMAGE_VER}"
+              echo ""
+              echo "   Контейнеры НЕ перезапускались, данные не тронуты."
+              echo "   Чтобы откатиться на PostgreSQL ${IMAGE_VER}, восстановите данные вручную:"
+              echo "     1. ls backups/            # дамп, снятый перед апгрейдом"
+              echo "     2. docker volume ls | grep ${VOLUME}_pg   # копия старого volume"
+              echo "     3. Верните копию volume или разверните дамп на образе ${IMAGE_VER}"
+              exit 1
+            fi
+
             docker-compose down
             docker-compose build --no-cache
             docker-compose up -d
