@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">Постоянный состав</h2>
+    <span class="badge bg-primary fs-6">В составе: <span id="rosterCount">{{ roster_count }}</span></span>
+</div>
+
+<p class="text-muted">
+    Игроки из состава попадают в список тренировки сразу, ещё до записи — напротив фамилии
+    появляется галочка, когда человек записался. Кто не в составе, но записался, уходит в резерв.
+    Цвет и амплуа задают порядок строк в списке.
+</p>
+
+<div class="table-responsive">
+    <table class="table table-hover align-middle">
+        <thead>
+            <tr>
+                <th class="text-center" style="width: 90px;">В составе</th>
+                <th class="text-start">Игрок</th>
+                <th class="text-start">Telegram</th>
+                <th class="text-center" style="width: 90px;">Вратарь</th>
+                <th class="text-center" style="width: 150px;">Цвет</th>
+                <th class="text-center" style="width: 130px;">Амплуа</th>
+                <th class="text-center" style="width: 110px;">Записей</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for player in players %}
+            <tr data-user-id="{{ player.user_id }}" class="{% if player.is_roster_member %}roster-row{% endif %}">
+                <td class="text-center">
+                    <input class="form-check-input roster-flag" type="checkbox"
+                           {% if player.is_roster_member %}checked{% endif %}>
+                </td>
+                <td class="text-start roster-name">{{ player.name }}</td>
+                <td class="text-start text-muted">
+                    {% if player.username %}@{{ player.username }}{% else %}—{% endif %}
+                </td>
+                <td class="text-center">
+                    <input class="form-check-input roster-goalkeeper" type="checkbox"
+                           {% if player.goalkeeper %}checked{% endif %}>
+                </td>
+                <td class="text-center">
+                    <select class="form-select form-select-sm roster-jersey">
+                        <option value="">—</option>
+                        {% for value, label in jerseys %}
+                        <option value="{{ value }}" {% if player.jersey_type == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td class="text-center">
+                    <select class="form-select form-select-sm roster-position"
+                            {% if player.goalkeeper %}disabled{% endif %}>
+                        <option value="">—</option>
+                        {% for value, label in positions %}
+                        <option value="{{ value }}" {% if player.position_type == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td class="text-center text-muted">{{ player.total_registrations }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if not players %}
+<div class="alert alert-info">
+    Игроков пока нет. Они появляются здесь после первой записи на тренировку или после
+    добавления через «Быстрое добавление» на странице расписания.
+</div>
+{% endif %}
+
+<script>
+// Сохраняем строку целиком при любом изменении: отдельная кнопка «Сохранить» на каждую
+// строку только мешала бы — правок много и они мелкие.
+function saveRosterRow(row) {
+    const userId = row.getAttribute('data-user-id');
+    const goalkeeper = row.querySelector('.roster-goalkeeper').checked;
+    const positionSelect = row.querySelector('.roster-position');
+
+    // У вратаря амплуа не бывает: он отдельная группа в списке.
+    positionSelect.disabled = goalkeeper;
+    if (goalkeeper) positionSelect.value = '';
+
+    const payload = {
+        is_roster_member: row.querySelector('.roster-flag').checked,
+        goalkeeper: goalkeeper,
+        jersey_type: row.querySelector('.roster-jersey').value,
+        position_type: positionSelect.value
+    };
+
+    row.classList.add('saving');
+    fetch(`/roster/${userId}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
+        .then(response => response.json())
+        .then(data => {
+            row.classList.remove('saving');
+            if (!data.success) {
+                alert('Не удалось сохранить: ' + (data.error || 'неизвестная ошибка'));
+                return;
+            }
+            row.classList.toggle('roster-row', payload.is_roster_member);
+            updateRosterCount();
+        })
+        .catch(error => {
+            row.classList.remove('saving');
+            console.error(error);
+            alert('Не удалось сохранить изменения');
+        });
+}
+
+function updateRosterCount() {
+    const count = document.querySelectorAll('.roster-flag:checked').length;
+    document.getElementById('rosterCount').textContent = count;
+}
+
+document.querySelectorAll('tr[data-user-id]').forEach(function (row) {
+    row.querySelectorAll('.roster-flag, .roster-goalkeeper, .roster-jersey, .roster-position')
+        .forEach(function (control) {
+            control.addEventListener('change', function () { saveRosterRow(row); });
+        });
+});
+</script>
+
+<style>
+.roster-row {
+    background-color: rgba(13, 110, 253, 0.06);
+}
+tr.saving {
+    opacity: 0.5;
+}
+.table th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+}
+</style>
+{% endblock %}

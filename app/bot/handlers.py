@@ -5,7 +5,10 @@ from datetime import datetime
 import logging
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
-from ..models import Training, Registration, UserPreferences, Player, TeamAssignment
+from ..models import (
+    Training, Registration, UserPreferences, Player, TeamAssignment,
+    SeasonPass, PassOffer,
+)
 from ..config import Config
 from ..database import session_scope
 from ..roster import POSITION_LABELS
@@ -128,6 +131,36 @@ async def update_temporary_user_id(session, real_user_id, username):
                     # Если есть, удаляем временные предпочтения
                     await session.delete(temp_prefs)
 
+            # Распределение по командам раньше здесь не переносилось: строки оставались
+            # на отрицательном user_id, и только что слитый игрок показывался как
+            # «Команда не назначена».
+            team_assignments = (await session.execute(
+                select(TeamAssignment).filter_by(user_id=temp_player.user_id)
+            )).scalars().all()
+            existing_assignments = set((await session.execute(
+                select(TeamAssignment.training_id).filter_by(user_id=real_user_id)
+            )).scalars().all())
+            for assignment in team_assignments:
+                if assignment.training_id in existing_assignments:
+                    await session.delete(assignment)
+                else:
+                    assignment.user_id = real_user_id
+
+            # Абонементы и отметки о разосланных предложениях — иначе купленный
+            # абонемент терялся бы при первом же /start.
+            for model in (SeasonPass, PassOffer):
+                rows = (await session.execute(
+                    select(model).filter_by(user_id=temp_player.user_id)
+                )).scalars().all()
+                existing_periods = set((await session.execute(
+                    select(model.period_start).filter_by(user_id=real_user_id)
+                )).scalars().all())
+                for row in rows:
+                    if row.period_start in existing_periods:
+                        await session.delete(row)
+                    else:
+                        row.user_id = real_user_id
+
             # Проверяем, нет ли уже игрока с реальным user_id
             real_player = (await session.execute(
                 select(Player).filter_by(user_id=real_user_id)
@@ -141,6 +174,10 @@ async def update_temporary_user_id(session, real_user_id, username):
                 real_player.total_registrations += temp_player.total_registrations
                 if temp_player.first_registration < real_player.first_registration:
                     real_player.first_registration = temp_player.first_registration
+                # Членство в составе не должно теряться при слиянии
+                real_player.is_roster_member = (
+                    real_player.is_roster_member or temp_player.is_roster_member
+                )
                 await session.delete(temp_player)
 
             await session.commit()

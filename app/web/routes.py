@@ -20,15 +20,33 @@ from ..models import (
     TeamAssignment,
     ScheduledMessage,
     RepeatType,
+    SeasonPass,
 )
 from ..database import get_db, session_scope
-from ..roster import POSITION_LABELS
+from ..roster import (
+    JERSEY_LABELS, JERSEY_ORDER, POSITION_LABELS, POSITION_RANK,
+    TELEGRAM_HARD_LIMIT, build_roster_view, period_start_for, render_roster_text,
+    telegram_length,
+)
+from ..settings import as_int, get_settings
 from ..config import Config
 
 # Наборы допустимых значений выводятся из перечислений: при добавлении цвета или амплуа
 # правку не придётся повторять в пяти местах.
 JERSEY_VALUES = [item.value for item in JerseyType]
 POSITION_VALUES = [item.value for item in PositionType]
+
+_JERSEY_RANK_BY_VALUE = {jersey.value: index for index, jersey in enumerate(JERSEY_ORDER)}
+_POSITION_RANK_BY_VALUE = {position.value: rank for position, rank in POSITION_RANK.items()}
+
+
+def _jersey_rank(value):
+    """Ранг цвета для сортировки; без цвета — в конец."""
+    return _JERSEY_RANK_BY_VALUE.get(value, len(_JERSEY_RANK_BY_VALUE))
+
+
+def _position_rank(value):
+    return _POSITION_RANK_BY_VALUE.get(value, len(_POSITION_RANK_BY_VALUE))
 from ..bot.weekly_posts import send_weekly_training_post
 from .security import require_login, json_error
 
@@ -118,6 +136,10 @@ async def index(
         context={
             'upcoming_trainings': upcoming_trainings,
             'past_trainings': past_trainings,
+            # Список амплуа приходит с сервера, чтобы значения не пришлось
+            # дублировать в шаблоне при следующем изменении перечисления.
+            'positions': [(item.value, POSITION_LABELS[item]) for item in PositionType],
+            'settings': await get_settings(session),
         },
     )
 
@@ -126,6 +148,11 @@ async def index(
 async def add_training(
     date_time: str = Form(...),
     max_participants: str = Form(...),
+    # Поля шапки списка. Пусто = взять значение по умолчанию из настроек,
+    # поэтому старые клиенты, присылающие только дату и лимит, продолжают работать.
+    end_time: str = Form(None),
+    venue: str = Form(None),
+    signup_deadline_text: str = Form(None),
     session: AsyncSession = Depends(get_db),
     _: bool = Depends(require_login),
 ):
@@ -133,6 +160,9 @@ async def add_training(
         training = Training(
             date_time=datetime.strptime(date_time, '%Y-%m-%dT%H:%M'),
             max_participants=int(max_participants),
+            end_time=datetime.strptime(end_time, '%H:%M').time() if end_time else None,
+            venue=(venue or '').strip() or None,
+            signup_deadline_text=(signup_deadline_text or '').strip() or None,
         )
         session.add(training)
         await session.commit()
@@ -178,23 +208,46 @@ async def get_participants(
     if not training:
         return JSONResponse(status_code=404, content={'error': 'Training not found'})
 
+    # Раньше здесь было два запроса на КАЖДОГО участника. Забираем всё пачками:
+    # список растёт до трёх десятков человек, и с составом станет только длиннее.
+    user_ids = {reg.user_id for reg in training.registrations}
+    assignments = {}
+    prefs_by_user = {}
+    roster_ids = set()
+    pass_holders = set()
+    if user_ids:
+        assignments = {a.user_id: a for a in (await session.execute(
+            select(TeamAssignment)
+            .where(TeamAssignment.training_id == training_id)
+            .where(TeamAssignment.user_id.in_(user_ids))
+        )).scalars().all()}
+        prefs_by_user = {p.user_id: p for p in (await session.execute(
+            select(UserPreferences).where(UserPreferences.user_id.in_(user_ids))
+        )).scalars().all()}
+        roster_ids = set((await session.execute(
+            select(Player.user_id)
+            .where(Player.user_id.in_(user_ids))
+            .where(Player.is_roster_member.is_(True))
+        )).scalars().all())
+        pass_holders = set((await session.execute(
+            select(SeasonPass.user_id)
+            .where(SeasonPass.period_start == period_start_for(training.date_time))
+            .where(SeasonPass.user_id.in_(user_ids))
+        )).scalars().all())
+
     participants = []
     for reg in training.registrations:
         # Используем display_name если есть, иначе username
         display_name = reg.display_name or reg.username or 'Без имени'
 
-        # Получаем статус team_assigned из таблицы TeamAssignment
-        team_assignment = (await session.execute(
-            select(TeamAssignment).filter_by(training_id=training_id, user_id=reg.user_id)
-        )).scalars().first()
+        team_assignment = assignments.get(reg.user_id)
         team_assigned = team_assignment.team_assigned if team_assignment else False
 
         # Сохранённые предпочтения игрока (для подстановки при отображении и при записи)
-        user_prefs = (await session.execute(
-            select(UserPreferences).filter_by(user_id=reg.user_id)
-        )).scalars().first()
+        user_prefs = prefs_by_user.get(reg.user_id)
         preferred_jersey = user_prefs.preferred_jersey_type.value if user_prefs and user_prefs.preferred_jersey_type else None
         preferred_position = user_prefs.preferred_position_type.value if user_prefs and user_prefs.preferred_position_type else None
+        has_pass = reg.user_id in pass_holders
 
         participants.append({
             'id': reg.id,
@@ -209,8 +262,20 @@ async def get_participants(
             'preferred_position_type': preferred_position,
             'goalkeeper': reg.goalkeeper,
             'team_assigned': team_assigned,
-            'paid': reg.paid
+            'paid': reg.paid or has_pass,
+            'roster_member': reg.user_id in roster_ids,
+            'has_pass': has_pass,
         })
+
+    # Порядок раньше не задавался вообще: его определял Postgres, и он не был
+    # стабилен после UPDATE — строки прыгали после сохранения маек. Сортируем так же,
+    # как в опубликованном списке: вратари, потом цвет, потом амплуа.
+    participants.sort(key=lambda p: (
+        not p['goalkeeper'],
+        _jersey_rank(p['jersey_type'] or p['preferred_jersey_type']),
+        _position_rank(p['position_type'] or p['preferred_position_type']),
+        p['id'],
+    ))
 
     return {
         'training_date': training.date_time.strftime('%d.%m.%Y %H:%M'),
@@ -244,10 +309,16 @@ async def save_jerseys(
 
         # Сохраняем выбранные майки и команды в базу данных
         for registration in training.registrations:
-            # Получаем отображаемое имя для поиска
+            # Ключом стал id регистрации: раньше сопоставление шло по строке
+            # display_name, и два однофамильца молча схлопывались в одну запись.
+            # Ключ по имени пока тоже принимается — у кого-то в браузере может
+            # остаться закешированный старый JS.
             display_name = registration.display_name or registration.username
-            if display_name in participant_selections:
-                selection = participant_selections[display_name]
+            selection = (
+                participant_selections.get(str(registration.id))
+                or participant_selections.get(display_name)
+            )
+            if selection:
 
                 # Сохраняем майку
                 if 'jersey' in selection and selection['jersey'] in JERSEY_VALUES:
@@ -662,10 +733,13 @@ async def bulk_register_players(
             )
 
         # Проверяем лимит вратарей
+        # Лимит вынесен в настройки: раньше здесь было жёстко 2, но в реальном
+        # составе вратарей четверо. Проверка остаётся — она ловит опечатки.
+        max_goalkeepers = as_int(await get_settings(session), 'roster.max_goalkeepers')
         current_goalkeepers = sum(1 for reg in training.registrations if reg.goalkeeper)
         new_goalkeepers = sum(1 for player in players if player.get('goalkeeper', False))
-        if current_goalkeepers + new_goalkeepers > 2:
-            return json_error('Максимум 2 вратаря на тренировку', 400)
+        if current_goalkeepers + new_goalkeepers > max_goalkeepers:
+            return json_error(f'Максимум {max_goalkeepers} вратарей на тренировку', 400)
 
         # Добавляем игроков
         added_count = 0
@@ -947,8 +1021,9 @@ async def rename_participant(
         # Если новое имя пустое, используем текущее отображаемое имя
         new_name = new_name_input or registration.display_name or registration.username or 'Без имени'
 
-        # Проверяем лимит вратарей (максимум 2)
+        # Лимит вратарей берётся из настроек, а не жёстко из кода
         if is_goalkeeper:
+            max_goalkeepers = as_int(await get_settings(session), 'roster.max_goalkeepers')
             current_goalkeepers = (await session.execute(
                 select(func.count())
                 .select_from(Registration)
@@ -958,8 +1033,8 @@ async def rename_participant(
                     Registration.id != participant_id,
                 )
             )).scalar_one()
-            if current_goalkeepers >= 2:
-                return json_error('Максимум 2 вратаря на тренировку', 400)
+            if current_goalkeepers >= max_goalkeepers:
+                return json_error(f'Максимум {max_goalkeepers} вратарей на тренировку', 400)
 
         # Обновляем отображаемое имя и статус вратаря в регистрации
         registration.display_name = new_name
@@ -1085,6 +1160,154 @@ async def mark_participant_paid(
 
     except Exception as e:
         logger.error(f"Error marking participant as paid: {e}")
+        await session.rollback()
+        return json_error(e, 500)
+
+
+@router.get('/training/{training_id}/roster/preview')
+async def preview_roster(
+    training_id: int,
+    session: AsyncSession = Depends(get_db),
+    _: bool = Depends(require_login),
+):
+    """Текст списка ровно в том виде, в каком он уйдёт в Telegram.
+
+    Возвращается именно строка от общего рендерера, а не пересобранная на клиенте
+    разметка: иначе предпросмотр и сообщение неизбежно разъедутся.
+    """
+    try:
+        training = await session.get(Training, training_id)
+        if not training:
+            return json_error('Training not found', 404)
+
+        settings = await get_settings(session)
+        view = await build_roster_view(session, training, settings)
+        text = render_roster_text(view)
+        return {
+            'success': True,
+            'text': text,
+            'length': telegram_length(text),
+            'limit': TELEGRAM_HARD_LIMIT,
+            'warnings': view.warnings,
+        }
+    except Exception as e:
+        logger.error(f"Error building roster preview: {e}")
+        return json_error(e, 500)
+
+
+@router.get('/roster')
+async def roster_page(
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+    _: bool = Depends(require_login),
+):
+    """Экран «Состав»: постоянный список с цветом и амплуа.
+
+    Отдельная страница нужна потому, что до неё задать игроку цвет и амплуа можно было
+    только через его регистрацию на конкретную тренировку — а состав должен существовать
+    до первой публикации списка.
+    """
+    players = (await session.execute(
+        select(Player).order_by(Player.is_roster_member.desc(), Player.id)
+    )).scalars().all()
+
+    prefs_by_user = {}
+    if players:
+        prefs_by_user = {p.user_id: p for p in (await session.execute(
+            select(UserPreferences).where(
+                UserPreferences.user_id.in_([p.user_id for p in players])
+            )
+        )).scalars().all()}
+
+    rows = []
+    for player in players:
+        prefs = prefs_by_user.get(player.user_id)
+        rows.append({
+            'user_id': player.user_id,
+            'username': player.username,
+            'name': (prefs.display_name if prefs and prefs.display_name else None)
+                    or player.display_name or player.username or 'Без имени',
+            'is_roster_member': player.is_roster_member,
+            'goalkeeper': prefs.goalkeeper if prefs else player.goalkeeper,
+            'jersey_type': prefs.preferred_jersey_type.value if prefs and prefs.preferred_jersey_type else '',
+            'position_type': prefs.preferred_position_type.value if prefs and prefs.preferred_position_type else '',
+            'total_registrations': player.total_registrations,
+        })
+
+    # В составе — сначала, и в том же порядке, что в опубликованном списке.
+    rows.sort(key=lambda r: (
+        not r['is_roster_member'],
+        not r['goalkeeper'],
+        _jersey_rank(r['jersey_type'] or None),
+        _position_rank(r['position_type'] or None),
+        r['user_id'],
+    ))
+
+    return templates.TemplateResponse(
+        request=request,
+        name='roster.html',
+        context={
+            'players': rows,
+            'jerseys': [(item.value, JERSEY_LABELS[item]) for item in JERSEY_ORDER],
+            'positions': [(item.value, POSITION_LABELS[item]) for item in PositionType],
+            'roster_count': sum(1 for r in rows if r['is_roster_member']),
+        },
+    )
+
+
+@router.post('/roster/{user_id}')
+async def update_roster_member(
+    request: Request,
+    user_id: int,
+    session: AsyncSession = Depends(get_db),
+    _: bool = Depends(require_login),
+):
+    """Правит одну строку состава.
+
+    Пишет в две таблицы: флаг участия — в players, цвет и амплуа — в user_preferences,
+    туда же, куда их кладёт кнопка «Запомнить». Дублировать эти поля не нужно.
+    """
+    try:
+        data = await request.json()
+
+        player = (await session.execute(
+            select(Player).where(Player.user_id == user_id)
+        )).scalars().first()
+        if not player:
+            return json_error('Игрок не найден', 404)
+
+        jersey_type = data.get('jersey_type') or None
+        position_type = data.get('position_type') or None
+        if jersey_type is not None and jersey_type not in JERSEY_VALUES:
+            return json_error('Invalid jersey_type', 400)
+        if position_type is not None and position_type not in POSITION_VALUES:
+            return json_error('Invalid position_type', 400)
+
+        goalkeeper = bool(data.get('goalkeeper', False))
+        if 'is_roster_member' in data:
+            player.is_roster_member = bool(data['is_roster_member'])
+        player.goalkeeper = goalkeeper
+
+        prefs = (await session.execute(
+            select(UserPreferences).where(UserPreferences.user_id == user_id)
+        )).scalars().first()
+        if prefs is None:
+            prefs = UserPreferences(user_id=user_id)
+            session.add(prefs)
+
+        prefs.goalkeeper = goalkeeper
+        # Вратарю амплуа не назначается: он отдельная группа в списке.
+        prefs.preferred_jersey_type = JerseyType(jersey_type) if jersey_type else None
+        prefs.preferred_position_type = (
+            PositionType(position_type) if (position_type and not goalkeeper) else None
+        )
+        if data.get('name'):
+            prefs.display_name = str(data['name']).strip()
+
+        await session.commit()
+        return {'success': True}
+    except Exception as e:
+        logger.error(f"Error updating roster member: {e}")
         await session.rollback()
         return json_error(e, 500)
 

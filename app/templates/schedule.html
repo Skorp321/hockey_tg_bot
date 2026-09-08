@@ -132,9 +132,14 @@
                             
                             <!-- Общая кнопка распределения на команды -->
                             <div class="text-center mt-3" id="distribute-button-container-{{ training.id }}" style="display: none;">
-                                <button class="btn btn-secondary btn-lg" id="distribute-teams-{{ training.id }}" 
+                                <button class="btn btn-secondary btn-lg" id="distribute-teams-{{ training.id }}"
                                         onclick='distributeTeams({{ training.id }})' disabled>
                                     🏒 Распределить на команды
+                                </button>
+                            </div>
+                            <div class="text-center mt-2">
+                                <button class="btn btn-outline-primary" onclick='showRosterPreview({{ training.id }})'>
+                                    👁 Предпросмотр списка
                                 </button>
                             </div>
                         </div>
@@ -236,6 +241,23 @@
                         <label for="training_time" class="form-label">Время (12-часовой формат)</label>
                         <input type="time" class="form-control" id="training_time" name="training_time" step="60" required>
                         <small class="form-text text-muted">Формат: ЧЧ:ММ (например: 11:30)</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="training_end_time" class="form-label">Время окончания</label>
+                        <input type="time" class="form-control" id="training_end_time" name="training_end_time" step="60"
+                               value="{{ settings.get('roster.default_end_time', '') }}">
+                        <small class="form-text text-muted">Показывается в шапке списка: «21.30 - 23.00»</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="training_venue" class="form-label">Арена</label>
+                        <input type="text" class="form-control" id="training_venue" name="training_venue"
+                               value="{{ settings.get('roster.default_venue', '') }}" placeholder="Арена Айс Атлетикс">
+                    </div>
+                    <div class="mb-3">
+                        <label for="training_deadline" class="form-label">Текст в шапке</label>
+                        <input type="text" class="form-control" id="training_deadline" name="training_deadline"
+                               value="{{ settings.get('roster.default_deadline_text', '') }}"
+                               placeholder="Просьба записаться до 22:00 понедельника">
                     </div>
                     <div class="mb-3">
                         <label for="max_participants" class="form-label">Максимум участников</label>
@@ -355,7 +377,84 @@
     </div>
 </div>
 
+<!-- Предпросмотр списка: показывает ровно тот текст, который уйдёт в Telegram -->
+<div class="modal fade" id="rosterPreviewModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Предпросмотр списка</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="rosterPreviewWarnings"></div>
+                <pre id="rosterPreviewText" class="roster-preview"></pre>
+                <div class="text-muted small" id="rosterPreviewLength"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" onclick="copyRosterPreview()">Скопировать</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
+// Амплуа приходят с сервера: значения не дублируются в шаблоне и автоматически
+// подхватят следующее изменение перечисления PositionType.
+const POSITION_OPTIONS = [
+    { value: '', label: '—' }{% for value, label in positions %},
+    { value: {{ value|tojson }}, label: {{ label|tojson }} }{% endfor %}
+];
+
+// Текст берём с сервера как есть — от того же рендерера, что отправляет сообщение в
+// Telegram. Пересобирать разметку на клиенте нельзя: предпросмотр и сообщение
+// неизбежно разъехались бы.
+function showRosterPreview(trainingId) {
+    const modal = new bootstrap.Modal(document.getElementById('rosterPreviewModal'));
+    const textEl = document.getElementById('rosterPreviewText');
+    const warnEl = document.getElementById('rosterPreviewWarnings');
+    const lenEl = document.getElementById('rosterPreviewLength');
+
+    textEl.textContent = 'Загрузка…';
+    warnEl.innerHTML = '';
+    lenEl.textContent = '';
+    modal.show();
+
+    fetch(`/training/${trainingId}/roster/preview`, { credentials: 'include' })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                textEl.textContent = 'Ошибка: ' + (data.error || 'неизвестная ошибка');
+                return;
+            }
+            // Именно textContent: фамилии приходят от людей, вставлять их как HTML нельзя
+            textEl.textContent = data.text;
+            lenEl.textContent = `${data.length} из ${data.limit} символов Telegram`;
+            if (data.warnings && data.warnings.length) {
+                warnEl.innerHTML =
+                    '<div class="alert alert-warning py-2"><strong>Требует внимания:</strong><ul class="mb-0"></ul></div>';
+                const list = warnEl.querySelector('ul');
+                data.warnings.forEach(function (warning) {
+                    const li = document.createElement('li');
+                    li.textContent = warning;
+                    list.appendChild(li);
+                });
+            }
+        })
+        .catch(error => {
+            console.error(error);
+            textEl.textContent = 'Не удалось загрузить предпросмотр';
+        });
+}
+
+function copyRosterPreview() {
+    const text = document.getElementById('rosterPreviewText').textContent;
+    navigator.clipboard.writeText(text).then(
+        function () { alert('Список скопирован'); },
+        function () { alert('Не удалось скопировать'); }
+    );
+}
+
 function deleteTraining(trainingId) {
     if (confirm('Вы уверены, что хотите удалить эту тренировку?')) {
         fetch(`/training/${trainingId}`, {
@@ -488,6 +587,7 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
     const darkChecked = (effectiveJersey === 'dark') ? 'checked' : '';
     const blueChecked = (effectiveJersey === 'blue') ? 'checked' : '';
     const yellowChecked = (effectiveJersey === 'yellow') ? 'checked' : '';
+    const redChecked = (effectiveJersey === 'red') ? 'checked' : '';
     const savedJerseyType = participant.jersey_type || '';
     
     
@@ -548,8 +648,6 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
     } else {
         // Создаем строку для полевого игрока (майки + амплуа)
         const effectivePosition = participant.position_type || participant.preferred_position_type || '';
-        const forwardChecked = (effectivePosition === 'forward') ? 'checked' : '';
-        const defenderChecked = (effectivePosition === 'defender') ? 'checked' : '';
         const savedPositionType = participant.position_type || '';
         
         row.innerHTML = `
@@ -622,39 +720,33 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                             <span class="jersey-circle jersey-circle--yellow" title="Жёлтая"></span>
                         </label>
                     </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio"
+                               name="jersey-type-${trainingId}-${participant.name}"
+                               id="red-${trainingId}-${index}"
+                               value="red"
+                               data-participant="${participant.name}"
+                               data-participant-id="${participant.id}"
+                               ${redChecked}
+                               data-saved-jersey="${savedJerseyType}"
+                               onchange="checkSelectionChanges(${trainingId})">
+                        <label class="form-check-label ms-1" for="red-${trainingId}-${index}">
+                            <span class="jersey-circle jersey-circle--red" title="Красная"></span>
+                        </label>
+                    </div>
                 </div>
             </td>
             <td class="text-center">
-                <div class="d-flex flex-column align-items-center gap-2">
-                    <div class="form-check">
-                        <input class="form-check-input" type="radio" 
-                               name="position-type-${trainingId}-${participant.name}" 
-                               id="forward-${trainingId}-${index}" 
-                               value="forward" 
-                               data-participant="${participant.name}"
-                               data-participant-id="${participant.id}"
-                               ${forwardChecked}
-                               data-saved-position="${savedPositionType}"
-                               onchange="checkSelectionChanges(${trainingId})">
-                        <label class="form-check-label ms-1" for="forward-${trainingId}-${index}">
-                            Нап
-                        </label>
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="radio" 
-                               name="position-type-${trainingId}-${participant.name}" 
-                               id="defender-${trainingId}-${index}" 
-                               value="defender" 
-                               data-participant="${participant.name}"
-                               data-participant-id="${participant.id}"
-                               ${defenderChecked}
-                               data-saved-position="${savedPositionType}"
-                               onchange="checkSelectionChanges(${trainingId})">
-                        <label class="form-check-label ms-1" for="defender-${trainingId}-${index}">
-                            Зщ
-                        </label>
-                    </div>
-                </div>
+                <select class="form-select form-select-sm position-select"
+                        name="position-type-${trainingId}-${participant.id}"
+                        data-participant="${participant.name}"
+                        data-participant-id="${participant.id}"
+                        data-saved-position="${savedPositionType}"
+                        onchange="checkSelectionChanges(${trainingId})">
+                    ${POSITION_OPTIONS.map(function (opt) {
+                        return `<option value="${opt.value}" ${effectivePosition === opt.value ? 'selected' : ''}>${opt.label}</option>`;
+                    }).join('')}
+                </select>
             </td>
             <td class="text-center">
                 <span class="badge ${participant.paid ? 'bg-success' : 'bg-danger'}">
@@ -732,75 +824,37 @@ function checkSelectionChanges(trainingId) {
     // Если есть только вратари (нет полевых игроков), то команды проверять не нужно
     const hasFieldPlayers = participantRows.length > 0;
     
-        // Проверяем обычных участников
-        participantRows.forEach((row, index) => {
-            const lightRadio = row.querySelector(`input[id="light-${trainingId}-${index}"]`);
-            const darkRadio = row.querySelector(`input[id="dark-${trainingId}-${index}"]`);
-            const blueRadio = row.querySelector(`input[id="blue-${trainingId}-${index}"]`);
-            const yellowRadio = row.querySelector(`input[id="yellow-${trainingId}-${index}"]`);
-            const forwardRadio = row.querySelector(`input[id="forward-${trainingId}-${index}"]`);
-            const defenderRadio = row.querySelector(`input[id="defender-${trainingId}-${index}"]`);
-            const participantName = lightRadio ? lightRadio.getAttribute('data-participant') : 'Unknown';
-        
-        
-        // Получаем сохраненные значения из атрибутов data
-        const savedJerseyType = lightRadio ? lightRadio.getAttribute('data-saved-jersey') : '';
-        const savedPositionType = forwardRadio ? forwardRadio.getAttribute('data-saved-position') : '';
-        
-        let jerseySelected = false;
-        let positionSelected = false;
+    // Проверяем обычных участников
+    participantRows.forEach((row) => {
+        // Ищем контролы по префиксу имени, а не по id вида "light-${trainingId}-${index}":
+        // прежняя привязка к индексу строки ломалась при любой пересортировке, а список
+        // теперь приходит с сервера уже отсортированным.
+        const anyJersey = row.querySelector('input[name^="jersey-type"]');
+        const jerseyChecked = row.querySelector('input[name^="jersey-type"]:checked');
+        const positionSelect = row.querySelector('[name^="position-type"]');
+        if (!anyJersey) return;
+
+        const participantId = anyJersey.getAttribute('data-participant-id');
+        const participantName = anyJersey.getAttribute('data-participant') || 'Unknown';
+        const savedJerseyType = anyJersey.getAttribute('data-saved-jersey') || '';
+        const savedPositionType = positionSelect ? (positionSelect.getAttribute('data-saved-position') || '') : '';
+
+        const jersey = jerseyChecked ? jerseyChecked.value : '';
+        const position = positionSelect ? positionSelect.value : '';
+        const jerseySelected = !!jersey;
+        const positionSelected = !!position;
         let participantChanged = false;
-        
-        // Проверяем выбор майки
-        if (lightRadio && lightRadio.checked) {
-            participantSelections[participantName] = { jersey: 'light' };
-            jerseySelected = true;
-            if (savedJerseyType !== 'light') {
-                participantChanged = true;
-            }
-        } else if (darkRadio && darkRadio.checked) {
-            participantSelections[participantName] = { jersey: 'dark' };
-            jerseySelected = true;
-            if (savedJerseyType !== 'dark') {
-                participantChanged = true;
-            }
-        } else if (blueRadio && blueRadio.checked) {
-            participantSelections[participantName] = { jersey: 'blue' };
-            jerseySelected = true;
-            if (savedJerseyType !== 'blue') {
-                participantChanged = true;
-            }
-        } else if (yellowRadio && yellowRadio.checked) {
-            participantSelections[participantName] = { jersey: 'yellow' };
-            jerseySelected = true;
-            if (savedJerseyType !== 'yellow') {
-                participantChanged = true;
-            }
+
+        // Ключ — id регистрации, а не фамилия: однофамильцы больше не схлопываются
+        // в одну запись. Имя передаётся рядом для обратной совместимости сервера.
+        if (jerseySelected || positionSelected) {
+            participantSelections[participantId] = { name: participantName };
+            if (jerseySelected) participantSelections[participantId].jersey = jersey;
+            if (positionSelected) participantSelections[participantId].position = position;
         }
-        
-        // Проверяем выбор амплуа для полевых игроков
-        if (forwardRadio && defenderRadio) {
-            if (forwardRadio.checked) {
-                if (!participantSelections[participantName]) {
-                    participantSelections[participantName] = {};
-                }
-                participantSelections[participantName].position = 'forward';
-                positionSelected = true;
-                if (savedPositionType !== 'forward') {
-                    participantChanged = true;
-                }
-            } else if (defenderRadio.checked) {
-                if (!participantSelections[participantName]) {
-                    participantSelections[participantName] = {};
-                }
-                participantSelections[participantName].position = 'defender';
-                positionSelected = true;
-                if (savedPositionType !== 'defender') {
-                    participantChanged = true;
-                }
-            }
-        }
-        
+        if (jerseySelected && savedJerseyType !== jersey) participantChanged = true;
+        if (positionSelected && savedPositionType !== position) participantChanged = true;
+
         if (!jerseySelected) allJerseysSelected = false;
         if (!positionSelected) allPositionsSelected = false;
         if (participantChanged) {
@@ -812,36 +866,25 @@ function checkSelectionChanges(trainingId) {
         if (rememberBtn) rememberBtn.disabled = !(jerseySelected && positionSelected);
     });
     
-    // Проверяем вратарей
-    goalkeeperRows.forEach((row, index) => {
-        const lightRadio = row.querySelector(`input[id="light-${trainingId}-${index}"]`);
-        const darkRadio = row.querySelector(`input[id="dark-${trainingId}-${index}"]`);
-        const participantName = lightRadio ? lightRadio.getAttribute('data-participant') : 'Unknown';
-        
-        
-        // Получаем сохраненные значения из атрибутов data
-        const savedJerseyType = lightRadio ? lightRadio.getAttribute('data-saved-jersey') : '';
-        
-        let jerseySelected = false;
-        let participantChanged = false;
-        
-        // Проверяем выбор майки (у вратарей только светлая и тёмная)
-        if (lightRadio && lightRadio.checked) {
-            participantSelections[participantName] = { jersey: 'light' };
-            jerseySelected = true;
-            if (savedJerseyType !== 'light') {
-                participantChanged = true;
-            }
-        } else if (darkRadio && darkRadio.checked) {
-            participantSelections[participantName] = { jersey: 'dark' };
-            jerseySelected = true;
-            if (savedJerseyType !== 'dark') {
-                participantChanged = true;
-            }
+    // Проверяем вратарей (у них только светлая и тёмная майка, амплуа не выбирается)
+    goalkeeperRows.forEach((row) => {
+        const anyJersey = row.querySelector('input[name^="jersey-type"]');
+        const jerseyChecked = row.querySelector('input[name^="jersey-type"]:checked');
+        if (!anyJersey) return;
+
+        const participantId = anyJersey.getAttribute('data-participant-id');
+        const participantName = anyJersey.getAttribute('data-participant') || 'Unknown';
+        const savedJerseyType = anyJersey.getAttribute('data-saved-jersey') || '';
+
+        const jersey = jerseyChecked ? jerseyChecked.value : '';
+        const jerseySelected = !!jersey;
+
+        if (jerseySelected) {
+            participantSelections[participantId] = { jersey: jersey, name: participantName };
+        } else {
+            allJerseysSelected = false;
         }
-        
-        if (!jerseySelected) allJerseysSelected = false;
-        if (participantChanged) {
+        if (jerseySelected && savedJerseyType !== jersey) {
             hasChanges = true;
             changedParticipants.push(participantName);
         }
@@ -967,28 +1010,17 @@ function distributeTeams(trainingId) {
             if (participantsTbody) {
                 const participantRows = participantsTbody.querySelectorAll('tr');
                 participantRows.forEach((row, index) => {
-                    const lightRadio = row.querySelector(`input[id="light-${trainingId}-${index}"]`);
-                    const darkRadio = row.querySelector(`input[id="dark-${trainingId}-${index}"]`);
-                    const blueRadio = row.querySelector(`input[id="blue-${trainingId}-${index}"]`);
-                    const yellowRadio = row.querySelector(`input[id="yellow-${trainingId}-${index}"]`);
-                    
-                    if (lightRadio && lightRadio.checked) {
-                        lightRadio.setAttribute('data-saved-jersey', 'light');
-                    } else if (darkRadio && darkRadio.checked) {
-                        darkRadio.setAttribute('data-saved-jersey', 'dark');
-                    } else if (blueRadio && blueRadio.checked) {
-                        blueRadio.setAttribute('data-saved-jersey', 'blue');
-                    } else if (yellowRadio && yellowRadio.checked) {
-                        yellowRadio.setAttribute('data-saved-jersey', 'yellow');
+                    // Запоминаем сохранённое значение на всех радиокнопках группы,
+                    // чтобы следующая проверка изменений сравнивала с актуальным.
+                    const jerseyChecked = row.querySelector('input[name^="jersey-type"]:checked');
+                    if (jerseyChecked) {
+                        row.querySelectorAll('input[name^="jersey-type"]').forEach(function (input) {
+                            input.setAttribute('data-saved-jersey', jerseyChecked.value);
+                        });
                     }
-                    
-                    const forwardRadio = row.querySelector(`input[id="forward-${trainingId}-${index}"]`);
-                    const defenderRadio = row.querySelector(`input[id="defender-${trainingId}-${index}"]`);
-                    
-                    if (forwardRadio && forwardRadio.checked) {
-                        forwardRadio.setAttribute('data-saved-position', 'forward');
-                    } else if (defenderRadio && defenderRadio.checked) {
-                        defenderRadio.setAttribute('data-saved-position', 'defender');
+                    const positionSelect = row.querySelector('[name^="position-type"]');
+                    if (positionSelect) {
+                        positionSelect.setAttribute('data-saved-position', positionSelect.value);
                     }
                 });
             }
@@ -1052,16 +1084,9 @@ function distributeTeams(trainingId) {
             if (participantsTbody) {
                 const participantRows = participantsTbody.querySelectorAll('tr');
                 participantRows.forEach((row) => {
-                    const lightRadio = row.querySelector('input[type="radio"][value="light"]');
-                    const darkRadio = row.querySelector('input[type="radio"][value="dark"]');
-                    const blueRadio = row.querySelector('input[type="radio"][value="blue"]');
-                    const yellowRadio = row.querySelector('input[type="radio"][value="yellow"]');
-                    const forwardRadio = row.querySelector('input[type="radio"][value="forward"]');
-                    const defenderRadio = row.querySelector('input[type="radio"][value="defender"]');
-                    
-                    const hasJersey = (lightRadio && lightRadio.checked) || (darkRadio && darkRadio.checked) || 
-                                      (blueRadio && blueRadio.checked) || (yellowRadio && yellowRadio.checked);
-                    const hasPosition = (forwardRadio && forwardRadio.checked) || (defenderRadio && defenderRadio.checked);
+                    const hasJersey = !!row.querySelector('input[name^="jersey-type"]:checked');
+                    const positionSelectForBadge = row.querySelector('[name^="position-type"]');
+                    const hasPosition = !!(positionSelectForBadge && positionSelectForBadge.value);
                     
                     if (hasJersey && hasPosition) {
                         // Находим первую ячейку с именем игрока
@@ -1117,6 +1142,9 @@ document.getElementById('addTrainingForm').addEventListener('submit', function(e
     const formData = new FormData();
     formData.append('date_time', date + 'T' + time);
     formData.append('max_participants', document.getElementById('max_participants').value);
+    formData.append('end_time', document.getElementById('training_end_time').value);
+    formData.append('venue', document.getElementById('training_venue').value);
+    formData.append('signup_deadline_text', document.getElementById('training_deadline').value);
     
     const modal = bootstrap.Modal.getInstance(document.getElementById('addTrainingModal'));
     
@@ -1890,7 +1918,8 @@ function sendWeeklyPost() {
 
 .jersey-options-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    /* три колонки: цветов стало пять */
+    grid-template-columns: repeat(3, auto);
     gap: 0.25rem 0.5rem;
     justify-items: center;
     margin: 0 auto;
@@ -1917,6 +1946,18 @@ function sendWeeklyPost() {
 .jersey-circle--yellow {
     background: #FFEB3B;
     border-color: #e0c000;
+}
+.jersey-circle--red {
+    background: #e53935;
+}
+.roster-preview {
+    white-space: pre-wrap;
+    font-family: inherit;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
 }
 .form-check-input:checked + .form-check-label .jersey-circle {
     transform: scale(1.2);

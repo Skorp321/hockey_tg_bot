@@ -46,6 +46,14 @@ POSITION_LABELS = {
     PositionType.RD: "ПЗ",
 }
 
+JERSEY_LABELS = {
+    JerseyType.LIGHT: "Белый",
+    JerseyType.YELLOW: "Жёлтый",
+    JerseyType.DARK: "Чёрный",
+    JerseyType.RED: "Красный",
+    JerseyType.BLUE: "Синий",
+}
+
 # Своим списком, а не strftime('%A'): в контейнере локаль C, и там был бы английский.
 WEEKDAYS_RU = [
     "Понедельник", "Вторник", "Среда", "Четверг",
