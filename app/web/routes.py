@@ -25,7 +25,7 @@ from ..models import (
 )
 from ..database import get_db, session_scope
 from ..roster import (
-    JERSEY_LABELS, JERSEY_ORDER, POSITION_LABELS, POSITION_RANK,
+    JERSEY_LABELS, JERSEY_ORDER, MONTHS_RU, POSITION_LABELS, POSITION_RANK,
     TELEGRAM_HARD_LIMIT, build_roster_view, period_start_for, render_roster_text,
     telegram_length,
 )
@@ -753,6 +753,18 @@ async def bulk_register_players(
         if current_goalkeepers + new_goalkeepers > max_goalkeepers:
             return json_error(f'Максимум {max_goalkeepers} вратарей на тренировку', 400)
 
+        # Владельцев абонемента получаем одним запросом до цикла
+        bulk_pass_holders = set()
+        candidate_ids = [
+            int(p['user_id']) for p in players if p.get('user_id') is not None
+        ]
+        if candidate_ids:
+            bulk_pass_holders = set((await session.execute(
+                select(SeasonPass.user_id)
+                .where(SeasonPass.period_start == period_start_for(training.date_time))
+                .where(SeasonPass.user_id.in_(candidate_ids))
+            )).scalars().all())
+
         # Добавляем игроков
         added_count = 0
         for player in players:
@@ -771,14 +783,16 @@ async def bulk_register_players(
                     select(UserPreferences).filter_by(user_id=user_id)
                 )).scalars().first()
 
-                # Создаем новую регистрацию
+                # Создаем новую регистрацию.
+                # Абонемент покрывает весь месяц, поэтому оплата отмечается сразу.
                 registration = Registration(
                     training_id=training_id,
                     user_id=user_id,
                     username=player.get('username', ''),
                     display_name=player.get('display_name') or player.get('username', ''),
                     goalkeeper=player.get('goalkeeper', False),
-                    registered_at=datetime.now()
+                    registered_at=datetime.now(),
+                    paid=user_id in bulk_pass_holders,
                 )
 
                 # Применяем предпочтения пользователя
@@ -1265,12 +1279,17 @@ async def roster_page(
     )).scalars().all()
 
     prefs_by_user = {}
+    pass_holders = set()
     if players:
+        user_ids = [p.user_id for p in players]
         prefs_by_user = {p.user_id: p for p in (await session.execute(
-            select(UserPreferences).where(
-                UserPreferences.user_id.in_([p.user_id for p in players])
-            )
+            select(UserPreferences).where(UserPreferences.user_id.in_(user_ids))
         )).scalars().all()}
+        pass_holders = set((await session.execute(
+            select(SeasonPass.user_id)
+            .where(SeasonPass.period_start == period_start_for(datetime.now()))
+            .where(SeasonPass.user_id.in_(user_ids))
+        )).scalars().all())
 
     rows = []
     for player in players:
@@ -1285,6 +1304,7 @@ async def roster_page(
             'jersey_type': prefs.preferred_jersey_type.value if prefs and prefs.preferred_jersey_type else '',
             'position_type': prefs.preferred_position_type.value if prefs and prefs.preferred_position_type else '',
             'total_registrations': player.total_registrations,
+            'has_pass': player.user_id in pass_holders,
         })
 
     # В составе — сначала, и в том же порядке, что в опубликованном списке.
@@ -1304,6 +1324,7 @@ async def roster_page(
             'jerseys': [(item.value, JERSEY_LABELS[item]) for item in JERSEY_ORDER],
             'positions': [(item.value, POSITION_LABELS[item]) for item in PositionType],
             'roster_count': sum(1 for r in rows if r['is_roster_member']),
+            'pass_month': MONTHS_RU[datetime.now().month - 1],
         },
     )
 
@@ -1356,6 +1377,20 @@ async def update_roster_member(
         )
         if data.get('name'):
             prefs.display_name = str(data['name']).strip()
+
+        # Абонемент за текущий месяц можно выдать вручную: часть людей платит наличными
+        if 'has_pass' in data:
+            period = period_start_for(datetime.now())
+            existing_pass = (await session.execute(
+                select(SeasonPass)
+                .where(SeasonPass.user_id == user_id)
+                .where(SeasonPass.period_start == period)
+            )).scalars().first()
+            if data['has_pass'] and existing_pass is None:
+                session.add(SeasonPass(user_id=user_id, period_start=period,
+                                       created_by='admin'))
+            elif not data['has_pass'] and existing_pass is not None:
+                await session.delete(existing_pass)
 
         await session.commit()
         return {'success': True}

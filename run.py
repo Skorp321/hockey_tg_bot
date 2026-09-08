@@ -2,7 +2,9 @@ import asyncio
 import signal
 from app import create_app
 from app.database import init_models
-from app.bot.handlers import start_bot, check_payment_reminders
+from app.bot.handlers import (
+    start_bot, check_payment_reminders, check_season_pass_offers,
+)
 from app.bot.roster_message import set_roster_bot, reconcile_rosters
 from hypercorn.asyncio import serve
 from hypercorn.config import Config as HyperConfig
@@ -78,6 +80,9 @@ async def main():
             try:
                 if bot_app and bot_app.bot:
                     await check_payment_reminders(bot_app.bot)
+                    # Второй цикл не заводим: предложения абонемента проверяются
+                    # тем же тиком, 30 минут для окна в три дня более чем достаточно.
+                    await check_season_pass_offers(bot_app.bot)
                 else:
                     print("⚠️ Бот не запущен, пропускаем проверку напоминаний")
             except Exception as e:

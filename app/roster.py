@@ -13,7 +13,7 @@ app/web/routes.py уже импортирует из app/bot — обратно�
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Optional
 
 from sqlalchemy import select
@@ -58,6 +58,11 @@ JERSEY_LABELS = {
 WEEKDAYS_RU = [
     "Понедельник", "Вторник", "Среда", "Четверг",
     "Пятница", "Суббота", "Воскресенье",
+]
+
+MONTHS_RU = [
+    "январь", "февраль", "март", "апрель", "май", "июнь",
+    "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
 ]
 
 MARK_PASS = "(А)"
@@ -213,6 +218,59 @@ def render_roster_text(view: RosterView) -> str:
 def period_start_for(moment: datetime):
     """Первое число месяца, к которому относится дата — ключ абонемента."""
     return moment.date().replace(day=1)
+
+
+def _month_bounds(year: int, month: int):
+    start = datetime(year, month, 1)
+    end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
+    return start, end
+
+
+async def first_training_of_month(session, year: int, month: int):
+    start, end = _month_bounds(year, month)
+    return (await session.execute(
+        select(Training.date_time)
+        .where(Training.date_time >= start)
+        .where(Training.date_time < end)
+        .order_by(Training.date_time)
+        .limit(1)
+    )).scalars().first()
+
+
+async def pass_window(session, now: Optional[datetime] = None, open_days_before: int = 3):
+    """Открыто ли сейчас окно покупки абонемента.
+
+    Возвращает (period_start, first_training) либо None.
+
+    Окно: от «первая тренировка месяца минус N дней» до её начала. Проверяем текущий
+    месяц и следующий: в конце месяца первая тренировка следующего может оказаться
+    ближе, чем через три дня, и окно должно открыться уже тогда.
+    """
+    now = now or datetime.now()
+
+    candidates = [(now.year, now.month)]
+    if now.month == 12:
+        candidates.append((now.year + 1, 1))
+    else:
+        candidates.append((now.year, now.month + 1))
+
+    for year, month in candidates:
+        first = await first_training_of_month(session, year, month)
+        if first is None:
+            continue
+        opens_at = first - timedelta(days=open_days_before)
+        if opens_at <= now < first:
+            return first.date().replace(day=1), first
+    return None
+
+
+async def has_season_pass(session, user_id: int, period_start) -> bool:
+    row = (await session.execute(
+        select(SeasonPass.id)
+        .where(SeasonPass.user_id == user_id)
+        .where(SeasonPass.period_start == period_start)
+    )).scalars().first()
+    return row is not None
 
 
 def _display_name(player: Player, prefs: Optional[UserPreferences]) -> str:

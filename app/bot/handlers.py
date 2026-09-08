@@ -4,6 +4,7 @@ from telegram.error import NetworkError, TimedOut, BadRequest, Forbidden, Confli
 from datetime import datetime
 import logging
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from ..models import (
     Training, Registration, UserPreferences, Player, TeamAssignment,
@@ -11,7 +12,10 @@ from ..models import (
 )
 from ..config import Config
 from ..database import session_scope
-from ..roster import POSITION_LABELS
+from ..roster import (
+    MONTHS_RU, POSITION_LABELS, has_season_pass, pass_window, period_start_for,
+)
+from ..settings import as_int, get_settings
 from .roster_message import schedule_roster_update
 from .weekly_posts import send_weekly_training_post
 
@@ -86,6 +90,33 @@ def get_info_keyboard():
         [InlineKeyboardButton("Показать расписание", callback_data='schedule')],
         [InlineKeyboardButton("Мои записи", callback_data='my_registrations')]
     ])
+
+async def build_pass_button(session, user_id):
+    """Кнопка «Абонемент», если окно открыто и абонемента ещё нет.
+
+    Вне окна кнопка просто не рисуется — устаревать нечему. Само нажатие всё равно
+    перепроверяется на сервере: кнопка могла остаться в старом сообщении.
+    """
+    try:
+        settings = await get_settings(session)
+        window = await pass_window(
+            session, open_days_before=as_int(settings, 'pass.open_days_before')
+        )
+        if window is None:
+            return None
+        period, _first = window
+        if await has_season_pass(session, user_id, period):
+            return None
+        month = MONTHS_RU[period.month - 1]
+        return InlineKeyboardButton(
+            f"🎫 Абонемент на {month}",
+            callback_data=f"buy_pass_{period.year:04d}-{period.month:02d}",
+        )
+    except Exception as exc:
+        # Кнопка — не повод ронять экран
+        logger.error(f"Не удалось построить кнопку абонемента: {exc}")
+        return None
+
 
 async def update_temporary_user_id(session, real_user_id, username):
     """
@@ -258,6 +289,11 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
         display_name = user_prefs.display_name if user_prefs and user_prefs.display_name else None
         username = update.effective_user.username or "Без имени"
 
+        # Абонемент покрывает все тренировки месяца, поэтому оплата отмечается сразу
+        covered_by_pass = await has_season_pass(
+            session, user_id, period_start_for(training.date_time)
+        )
+
         registration = Registration(
             training_id=training.id,
             user_id=user_id,
@@ -265,7 +301,8 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
             display_name=display_name,
             registered_at=datetime.now(),
             jersey_type=user_prefs.preferred_jersey_type if user_prefs else None,
-            goalkeeper=user_prefs.goalkeeper if user_prefs else False
+            goalkeeper=user_prefs.goalkeeper if user_prefs else False,
+            paid=covered_by_pass,
         )
 
         try:
@@ -459,6 +496,10 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
         # Кнопка отмены записи (показываем только если есть предстоящие тренировки)
         if upcoming_registrations:
             keyboard.append([InlineKeyboardButton("❌ Отменить запись", callback_data='cancel_registration')])
+
+        pass_button = await build_pass_button(session, user_id)
+        if pass_button:
+            keyboard.append([pass_button])
 
     # Добавляем кнопку просмотра участников и возврата в главное меню
     keyboard.append([InlineKeyboardButton("👥 Посмотреть участников", callback_data='view_participants')])
@@ -802,6 +843,7 @@ async def start_bot():
     application.add_handler(CallbackQueryHandler(handle_mark_payment, pattern="^mark_payment$"))
     application.add_handler(CallbackQueryHandler(handle_cancel_registration, pattern="^cancel_registration$"))
     application.add_handler(CallbackQueryHandler(view_training_participants, pattern="^view_participants$"))
+    application.add_handler(CallbackQueryHandler(handle_buy_pass, pattern=r"^buy_pass_\d{4}-\d{2}$"))
     application.add_handler(CallbackQueryHandler(return_to_start, pattern="^start$"))
 
     # Настройки для polling с обработкой ошибок
@@ -931,6 +973,157 @@ async def handle_cancel_registration(update: Update, context: ContextTypes.DEFAU
     await query.answer()
     await query.message.reply_text(message, reply_markup=reply_markup)
 
+async def handle_buy_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Покупка абонемента на месяц.
+
+    Абонемент покрывает все тренировки календарного месяца, поэтому ₽ у его владельца
+    проставляется автоматически — и на уже существующих записях, и на будущих.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+
+    try:
+        period = datetime.strptime(query.data.replace('buy_pass_', ''), '%Y-%m').date()
+    except ValueError:
+        await query.answer("Некорректная кнопка")
+        return
+
+    async with session_scope() as session:
+        settings = await get_settings(session)
+        window = await pass_window(
+            session, open_days_before=as_int(settings, 'pass.open_days_before')
+        )
+        # Проверяем окно на сервере: кнопка могла остаться в старом сообщении в чате.
+        if window is None or window[0] != period:
+            await query.answer("Покупка абонемента сейчас недоступна")
+            return
+
+        if await has_season_pass(session, user_id, period):
+            await query.answer("Абонемент уже оформлен")
+            return
+
+        session.add(SeasonPass(user_id=user_id, period_start=period, created_by='bot'))
+        try:
+            await session.commit()
+        except IntegrityError:
+            # Дважды нажали подряд — второй раз натыкаемся на уникальный индекс
+            await session.rollback()
+            await query.answer("Абонемент уже оформлен")
+            return
+
+        # Задним числом закрываем оплату по уже существующим записям месяца
+        month_start = datetime(period.year, period.month, 1)
+        month_end = (datetime(period.year + 1, 1, 1) if period.month == 12
+                     else datetime(period.year, period.month + 1, 1))
+        registrations = (await session.execute(
+            select(Registration)
+            .join(Training)
+            .options(selectinload(Registration.training))
+            .where(Registration.user_id == user_id)
+            .where(Training.date_time >= month_start)
+            .where(Training.date_time < month_end)
+        )).scalars().all()
+        affected = []
+        for registration in registrations:
+            if not registration.paid:
+                registration.paid = True
+            affected.append(registration.training_id)
+        await session.commit()
+
+    for training_id in set(affected):
+        schedule_roster_update(training_id)
+
+    await query.answer("✅ Абонемент оформлен!")
+    await query.message.reply_text(
+        f"🎫 Абонемент на {MONTHS_RU[period.month - 1]} оформлен.\n"
+        f"Оплата тренировок этого месяца отмечается автоматически.",
+        reply_markup=get_standard_keyboard(),
+    )
+
+
+async def check_season_pass_offers(bot):
+    """Рассылает предложение купить абонемент, когда открывается окно.
+
+    Устроено так же, как check_payment_reminders: та же фоновая задача, та же защита
+    от повторной отправки через отдельную таблицу-отметку.
+    """
+    try:
+        async with session_scope() as session:
+            settings = await get_settings(session)
+            window = await pass_window(
+                session, open_days_before=as_int(settings, 'pass.open_days_before')
+            )
+            if window is None:
+                return 0
+            period, first_training = window
+
+            # Только состав и только реальные телеграм-аккаунты: у заведённых вручную
+            # user_id отрицательный, и отправка им всё равно не пройдёт.
+            players = (await session.execute(
+                select(Player)
+                .where(Player.is_roster_member.is_(True))
+                .where(Player.user_id > 0)
+            )).scalars().all()
+            if not players:
+                return 0
+
+            user_ids = [p.user_id for p in players]
+            already_paid = set((await session.execute(
+                select(SeasonPass.user_id)
+                .where(SeasonPass.period_start == period)
+                .where(SeasonPass.user_id.in_(user_ids))
+            )).scalars().all())
+            already_offered = set((await session.execute(
+                select(PassOffer.user_id)
+                .where(PassOffer.period_start == period)
+                .where(PassOffer.user_id.in_(user_ids))
+            )).scalars().all())
+
+            targets = [
+                p for p in players
+                if p.user_id not in already_paid and p.user_id not in already_offered
+            ]
+
+            sent = 0
+            month = MONTHS_RU[period.month - 1]
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
+                f"🎫 Оформить абонемент на {month}",
+                callback_data=f"buy_pass_{period.year:04d}-{period.month:02d}",
+            )]])
+
+            for player in targets:
+                # Отметку ставим ДО отправки: при сбое лучше не отправить, чем слать
+                # одно и то же каждые полчаса.
+                session.add(PassOffer(user_id=player.user_id, period_start=period))
+                await session.commit()
+                try:
+                    await bot.send_message(
+                        chat_id=player.user_id,
+                        text=(
+                            f"🎫 Открыт приём на абонемент — {month}\n\n"
+                            f"Первая тренировка месяца: "
+                            f"{first_training.strftime('%d.%m.%Y %H:%M')}\n"
+                            f"Абонемент покрывает все тренировки месяца, "
+                            f"оплата будет отмечаться автоматически."
+                        ),
+                        reply_markup=keyboard,
+                    )
+                    sent += 1
+                except Forbidden:
+                    logger.info(f"Игрок {player.user_id} заблокировал бота, предложение пропущено")
+                except BadRequest as exc:
+                    logger.info(f"Не удалось предложить абонемент {player.user_id}: {exc}")
+                except (NetworkError, TimedOut) as exc:
+                    logger.warning(f"Сеть недоступна при отправке предложения: {exc}")
+
+            if sent:
+                logger.info(f"🎫 Предложений абонемента отправлено: {sent}")
+            return sent
+    except Exception as exc:
+        logger.error(f"❌ Ошибка при рассылке предложений абонемента: {exc}")
+        return 0
+
+
 # Функции для напоминаний об оплате
 async def send_payment_reminder(session, registration: Registration, training: Training, bot):
     """Отправляет напоминание об оплате участнику"""
@@ -1029,6 +1222,21 @@ async def check_payment_reminders(bot):
                     .where(Registration.paid.is_(False))
                     .where(Registration.goalkeeper.is_(False))
                 )).scalars().all()
+
+                # Владельцы абонемента уже оплатили месяц: без этого фильтра бот
+                # напоминал бы им об оплате каждый час.
+                if unpaid_registrations:
+                    pass_holders = set((await session.execute(
+                        select(SeasonPass.user_id)
+                        .where(SeasonPass.period_start == period_start_for(training.date_time))
+                        .where(SeasonPass.user_id.in_(
+                            [r.user_id for r in unpaid_registrations]
+                        ))
+                    )).scalars().all())
+                    if pass_holders:
+                        unpaid_registrations = [
+                            r for r in unpaid_registrations if r.user_id not in pass_holders
+                        ]
 
                 logger.debug(f"   👥 Неоплативших участников на тренировке {training.id}: {len(unpaid_registrations)}")
 

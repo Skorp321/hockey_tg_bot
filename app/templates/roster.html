@@ -22,6 +22,7 @@
                 <th class="text-center" style="width: 90px;">Вратарь</th>
                 <th class="text-center" style="width: 150px;">Цвет</th>
                 <th class="text-center" style="width: 130px;">Амплуа</th>
+                <th class="text-center" style="width: 120px;">Абонемент<br><small class="text-muted fw-normal">{{ pass_month }}</small></th>
                 <th class="text-center" style="width: 110px;">Записей</th>
             </tr>
         </thead>
@@ -57,6 +58,11 @@
                         {% endfor %}
                     </select>
                 </td>
+                <td class="text-center">
+                    <input class="form-check-input roster-pass" type="checkbox"
+                           {% if player.has_pass %}checked{% endif %}
+                           title="Абонемент на текущий месяц — можно выдать вручную, если платили наличными">
+                </td>
                 <td class="text-center text-muted">{{ player.total_registrations }}</td>
             </tr>
             {% endfor %}
@@ -87,7 +93,8 @@ function saveRosterRow(row) {
         is_roster_member: row.querySelector('.roster-flag').checked,
         goalkeeper: goalkeeper,
         jersey_type: row.querySelector('.roster-jersey').value,
-        position_type: positionSelect.value
+        position_type: positionSelect.value,
+        has_pass: row.querySelector('.roster-pass').checked
     };
 
     row.classList.add('saving');
@@ -120,7 +127,7 @@ function updateRosterCount() {
 }
 
 document.querySelectorAll('tr[data-user-id]').forEach(function (row) {
-    row.querySelectorAll('.roster-flag, .roster-goalkeeper, .roster-jersey, .roster-position')
+    row.querySelectorAll('.roster-flag, .roster-goalkeeper, .roster-jersey, .roster-position, .roster-pass')
         .forEach(function (control) {
             control.addEventListener('change', function () { saveRosterRow(row); });
         });
