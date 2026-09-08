@@ -48,6 +48,14 @@ jobs:
               exit 1
             fi
 
+            echo "🧱 Применение SQL-миграций (при остановленном приложении)..."
+            docker-compose stop bot || true
+            docker-compose up -d db
+            if ! bash scripts/run-migrations.sh < /dev/null; then
+              echo "❌ Миграции не применились. Деплой остановлен."
+              exit 1
+            fi
+
             docker-compose down
             docker-compose build --no-cache
             docker-compose up -d

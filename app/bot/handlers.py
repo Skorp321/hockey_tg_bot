@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from ..models import Training, Registration, UserPreferences, Player, TeamAssignment
 from ..config import Config
 from ..database import session_scope
+from ..roster import POSITION_LABELS
 from .weekly_posts import send_weekly_training_post
 
 # Настройка логирования
@@ -391,11 +392,7 @@ async def show_my_registrations(update: Update, context: ContextTypes.DEFAULT_TY
 
                 # Добавляем информацию об амплуа для полевых игроков
                 if not reg.goalkeeper and reg.position_type:
-                    if reg.position_type.value == 'forward':
-                        position_info = " - Нап"
-                    else:
-                        position_info = " - Зщ"
-                    message += f"{position_info}"
+                    message += f" - {POSITION_LABELS.get(reg.position_type, '—')}"
 
                 message += "\n"
             else:
@@ -523,10 +520,7 @@ async def view_training_participants(update: Update, context: ContextTypes.DEFAU
                     # Добавляем информацию об амплуа для полевых игроков
                     position_info = ""
                     if reg.position_type:
-                        if reg.position_type.value == 'forward':
-                            position_info = " - Нап"
-                        else:
-                            position_info = " - Зщ"
+                        position_info = f" - {POSITION_LABELS.get(reg.position_type, '—')}"
 
                     if reg.jersey_type.value == 'light':
                         light_players.append((display_name, reg.paid, position_info))
@@ -676,11 +670,7 @@ async def view_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     # Добавляем информацию об амплуа для полевых игроков
                     if not reg.goalkeeper and reg.position_type:
-                        if reg.position_type.value == 'forward':
-                            position_info = " - Нап"
-                        else:
-                            position_info = " - Зщ"
-                        message += f"{position_info}"
+                        message += f" - {POSITION_LABELS.get(reg.position_type, '—')}"
 
                     message += "\n"
                 else:

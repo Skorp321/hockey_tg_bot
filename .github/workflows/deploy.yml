@@ -23,13 +23,17 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      
+          pip install -r requirements-dev.txt
+
       - name: Run linting
         run: |
-          pip install flake8
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=venv,.venv
-        continue-on-error: true
+          flake8 . --count --select=E9,F63,F7,F82,F821,F811 --show-source --statistics --exclude=venv,.venv
+
+      # Гейт, а не декорация: golden-тест держит формат списка состава, который
+      # уходит и в Telegram, и в предпросмотр админки. Раньше здесь был только
+      # flake8 с continue-on-error, то есть джоб не мог упасть в принципе.
+      - name: Run tests
+        run: pytest -q
 
   deploy:
     name: Deploy to Production Server
@@ -62,6 +66,19 @@ jobs:
               echo "❌ Миграция БД не удалась. Деплой остановлен, приложение не обновлялось."
               echo "   Данные сохранены: дамп в backups/ и копия volume для отката."
               echo "   Команды отката напечатаны выше в логе миграции."
+              exit 1
+            fi
+
+            echo "🧱 Применение SQL-миграций..."
+            # Порядок важен: миграции идут при поднятой БД и ОСТАНОВЛЕННОМ приложении.
+            # Иначе работающий контейнер со старым кодом читал бы enum, из которого
+            # миграция уже убрала значения, и сыпал LookupError на каждом запросе.
+            # create_all(checkfirst=True) сам создаёт только отсутствующие таблицы,
+            # колонки и enum-типы он не трогает — за этим и нужен раннер.
+            docker-compose stop bot || true
+            docker-compose up -d db
+            if ! bash scripts/run-migrations.sh < /dev/null; then
+              echo "❌ Миграции не применились. Деплой остановлен, приложение не обновлялось."
               exit 1
             fi
 

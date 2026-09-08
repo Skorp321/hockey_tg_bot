@@ -854,7 +854,11 @@ function checkSelectionChanges(trainingId) {
     // Кнопка активна если все майки выбраны И (нет полевых игроков ИЛИ у всех полевых игроков выбрано амплуа)
     const canDistribute = allJerseysSelected && (!hasFieldPlayers || allPositionsSelected);
     
-    console.log(`allJerseysSelected: ${allJerseysSelected}, allTeamsSelected: ${allTeamsSelected}, hasFieldPlayers: ${hasFieldPlayers}, canDistribute: ${canDistribute}`);
+    // Здесь была переменная allTeamsSelected, которой нигде не объявлено: чтение
+    // необъявленного идентификатора бросает ReferenceError, и функция падала до того,
+    // как включала кнопку и заполняла window.participantSelections_*. Распределение
+    // на команды из-за этого не работало вообще.
+    console.log(`allJerseysSelected: ${allJerseysSelected}, allPositionsSelected: ${allPositionsSelected}, hasFieldPlayers: ${hasFieldPlayers}, canDistribute: ${canDistribute}`);
     
     if (canDistribute) {
         if (distributeButton) {

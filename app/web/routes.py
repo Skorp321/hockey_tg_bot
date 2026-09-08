@@ -22,7 +22,13 @@ from ..models import (
     RepeatType,
 )
 from ..database import get_db, session_scope
+from ..roster import POSITION_LABELS
 from ..config import Config
+
+# Наборы допустимых значений выводятся из перечислений: при добавлении цвета или амплуа
+# правку не придётся повторять в пяти местах.
+JERSEY_VALUES = [item.value for item in JerseyType]
+POSITION_VALUES = [item.value for item in PositionType]
 from ..bot.weekly_posts import send_weekly_training_post
 from .security import require_login, json_error
 
@@ -244,11 +250,11 @@ async def save_jerseys(
                 selection = participant_selections[display_name]
 
                 # Сохраняем майку
-                if 'jersey' in selection and selection['jersey'] in ['light', 'dark', 'blue', 'yellow']:
+                if 'jersey' in selection and selection['jersey'] in JERSEY_VALUES:
                     registration.jersey_type = JerseyType(selection['jersey'])
 
                 # Сохраняем амплуа
-                if 'position' in selection and selection['position'] in ['forward', 'defender']:
+                if 'position' in selection and selection['position'] in POSITION_VALUES:
                     registration.position_type = PositionType(selection['position'])
 
                 # Устанавливаем флаг назначения команды в таблице TeamAssignment
@@ -272,11 +278,11 @@ async def save_jerseys(
                     session.add(team_assignment)
 
                 if registration.goalkeeper:
-                    if 'jersey' in selection and selection['jersey'] in ['light', 'dark', 'blue', 'yellow']:
+                    if 'jersey' in selection and selection['jersey'] in JERSEY_VALUES:
                         logger.info(f"✅ Параметры сохранены для вратаря {display_name}")
                 else:
-                    has_jersey = 'jersey' in selection and selection['jersey'] in ['light', 'dark', 'blue', 'yellow']
-                    has_position = 'position' in selection and selection['position'] in ['forward', 'defender']
+                    has_jersey = 'jersey' in selection and selection['jersey'] in JERSEY_VALUES
+                    has_position = 'position' in selection and selection['position'] in POSITION_VALUES
 
                     logger.info(f"🔍 Проверка для полевого игрока {display_name}: jersey={has_jersey}, position={has_position}")
 
@@ -431,7 +437,7 @@ async def send_notifications(
 
                     # Добавляем амплуа для полевых игроков
                     if not registration.goalkeeper and registration.position_type:
-                        position_text = "Нап" if registration.position_type.value == 'forward' else "Зщ"
+                        position_text = POSITION_LABELS.get(registration.position_type, "—")
                         message += f"🏒 Ваше амплуа: {position_text}\n"
 
                     message += f"👥 Всего участников: {len(training.registrations)}/{training.max_participants}"
@@ -1012,9 +1018,9 @@ async def remember_participant_preferences(
         jersey_type = data.get('jersey_type')
         position_type = data.get('position_type')
 
-        if jersey_type not in ('light', 'dark', 'blue', 'yellow') and jersey_type is not None:
+        if jersey_type is not None and jersey_type not in JERSEY_VALUES:
             return json_error('Invalid jersey_type', 400)
-        if position_type not in ('forward', 'defender') and position_type is not None and not registration.goalkeeper:
+        if position_type is not None and position_type not in POSITION_VALUES and not registration.goalkeeper:
             return json_error('Invalid position_type', 400)
 
         user_prefs = (await session.execute(
@@ -1091,6 +1097,19 @@ async def health_check():
     try:
         async with session_scope() as session:
             await session.execute(text('SELECT 1'))
+
+        # Схема отстала от кода — считаем это нездоровьем, чтобы деплой упал сразу
+        # на health-check, а не через часы на первой записи нового значения enum.
+        from ..database import schema_stale_reason
+        if schema_stale_reason:
+            return JSONResponse(status_code=503, content={
+                'status': 'unhealthy',
+                'database': 'connected',
+                'error': f'Схема БД отстала от кода: {schema_stale_reason}. '
+                         f'Примените миграции: bash scripts/run-migrations.sh',
+                'timestamp': datetime.now().isoformat()
+            })
+
         return {
             'status': 'healthy',
             'database': 'connected',

@@ -1,5 +1,8 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, ForeignKey, Enum, Boolean, Text
+from sqlalchemy import (
+    Column, Integer, BigInteger, String, DateTime, Date, Time, ForeignKey, Enum,
+    Boolean, Text, UniqueConstraint,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 import enum
@@ -41,15 +44,21 @@ def _enum_by_value_or_name(enum_class):
     )
 
 
+# Порядок объявления = порядок групп в опубликованном списке.
 class JerseyType(enum.Enum):
     LIGHT = "light"  # Белая
-    DARK = "dark"   # Черная
-    BLUE = "blue"   # Синяя
     YELLOW = "yellow"  # Желтая
+    DARK = "dark"   # Черная
+    RED = "red"  # Красная
+    BLUE = "blue"   # Синяя
 
+# Порядок объявления = порядок игроков внутри цветной группы.
 class PositionType(enum.Enum):
-    FORWARD = "forward"  # Нап
-    DEFENDER = "defender"  # Зщ
+    LW = "lw"  # Левый нападающий
+    C = "c"  # Центральный нападающий
+    RW = "rw"  # Правый нападающий
+    LD = "ld"  # Левый защитник
+    RD = "rd"  # Правый защитник
 
 class RepeatType(enum.Enum):
     ONCE = "once"
@@ -80,8 +89,13 @@ class Training(Base):
     id = Column(Integer, primary_key=True)
     date_time = Column(DateTime, nullable=False)
     max_participants = Column(Integer, default=10)
+    # Поля шапки списка. NULL = взять значение по умолчанию из app_settings.
+    end_time = Column(Time, nullable=True)  # Время окончания, вторая половина «21.30 - 23.00»
+    venue = Column(String(200), nullable=True)  # Арена
+    signup_deadline_text = Column(Text, nullable=True)  # Свободный текст дедлайна в шапке
     registrations = relationship('Registration', back_populates='training', cascade='all, delete-orphan')
     team_assignments = relationship('TeamAssignment', cascade='all, delete-orphan')
+    messages = relationship('TrainingMessage', back_populates='training', cascade='all, delete-orphan')
 
 class Registration(Base):
     __tablename__ = 'registrations'
@@ -108,6 +122,9 @@ class Player(Base):
     username = Column(String(100), nullable=True)  # Telegram username
     display_name = Column(String(100), nullable=True)  # Отображаемое имя игрока
     goalkeeper = Column(Boolean, default=False, nullable=False)  # Статус вратаря
+    # Входит ли игрок в постоянный состав. Цвет и амплуа при этом берутся из
+    # UserPreferences — здесь их дублировать не нужно.
+    is_roster_member = Column(Boolean, default=False, nullable=False)
     first_registration = Column(DateTime, nullable=False)  # Дата первой регистрации
     last_registration = Column(DateTime, nullable=False)  # Дата последней регистрации
     total_registrations = Column(Integer, default=1, nullable=False)  # Общее количество записей
@@ -153,4 +170,69 @@ class ScheduledMessage(Base):
         if days:
             self.repeat_days = json.dumps(days)
         else:
-            self.repeat_days = None 
+            self.repeat_days = None
+
+
+# Таблицы ниже добавлены вместе со списком состава. Они приезжают на прод сами:
+# create_all(checkfirst=True) создаёт отсутствующие таблицы (в отличие от колонок).
+# По этой же причине здесь намеренно нет enum-колонок — иначе create_all попытался бы
+# выпустить CREATE TYPE, а это как раз хрупкий путь, который лечится миграциями.
+
+class AppSetting(Base):
+    """Настройки, которые нужно менять без передеплоя (дефолты шапки, лимиты)."""
+    __tablename__ = 'app_settings'
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+
+class TrainingMessage(Base):
+    """Опубликованное в Telegram сообщение со списком — чтобы потом его редактировать."""
+    __tablename__ = 'training_messages'
+
+    id = Column(Integer, primary_key=True)
+    training_id = Column(Integer, ForeignKey('trainings.id'), nullable=False)
+    chat_id = Column(BigInteger, nullable=False)
+    message_id = Column(BigInteger, nullable=False)
+    thread_id = Column(BigInteger, nullable=True)  # топик супергруппы, если используется
+    # Хеш последнего отправленного текста: если не изменился, Telegram вообще не дёргаем.
+    # Заодно снимает все ошибки "message is not modified".
+    text_hash = Column(String(64), nullable=True)
+    last_edit_at = Column(DateTime, nullable=True)
+    disabled = Column(Boolean, default=False, nullable=False)  # бота выгнали из канала и т.п.
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+
+    training = relationship('Training', back_populates='messages')
+
+    __table_args__ = (UniqueConstraint('training_id', 'chat_id', name='uq_training_message'),)
+
+
+class SeasonPass(Base):
+    """Абонемент на календарный месяц."""
+    __tablename__ = 'season_passes'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, nullable=False)
+    # Всегда первое число месяца: одна колонка вместо пары (год, месяц) и одно сравнение.
+    period_start = Column(Date, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    created_by = Column(String(20), nullable=True)  # 'bot' | 'admin'
+
+    __table_args__ = (UniqueConstraint('user_id', 'period_start', name='uq_season_pass_period'),)
+
+
+class PassOffer(Base):
+    """Отметка, что предложение купить абонемент уже отправлено.
+
+    Роль та же, что у Registration.last_payment_reminder: защита от повторной рассылки
+    при каждом тике фоновой задачи.
+    """
+    __tablename__ = 'pass_offers'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, nullable=False)
+    period_start = Column(Date, nullable=False)
+    sent_at = Column(DateTime, default=datetime.now, nullable=False)
+
+    __table_args__ = (UniqueConstraint('user_id', 'period_start', name='uq_pass_offer_period'),)

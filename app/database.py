@@ -1,9 +1,13 @@
+import logging
+import os
 from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .config import Config
 from .models import Base
+
+logger = logging.getLogger(__name__)
 
 
 def _to_async_url(url: str) -> str:
@@ -64,7 +68,65 @@ async def session_scope():
             raise
 
 
+# Заполняется verify_enum_schema(). Не None означает, что схема БД отстала от кода;
+# /health в этом случае отдаёт 503, и деплой падает на health-check, а не через несколько
+# часов первым же «invalid input value for enum».
+schema_stale_reason = None
+
+
+async def verify_enum_schema():
+    """Сверяет значения enum в БД с перечислениями в коде.
+
+    create_all(checkfirst=True) создаёт отсутствующие таблицы, но не меняет уже
+    существующие типы, поэтому забытая миграция иначе никак себя не проявит до первой
+    записи нового значения.
+    """
+    global schema_stale_reason
+    schema_stale_reason = None
+
+    if not DATABASE_URL.startswith("postgresql"):
+        return  # у sqlite enum эмулируется через varchar, сверять нечего
+
+    from sqlalchemy import text
+    from .models import JerseyType, PositionType
+
+    expected = {
+        "jerseytype": {item.value for item in JerseyType},
+        "positiontype": {item.value for item in PositionType},
+    }
+
+    problems = []
+    try:
+        async with engine.connect() as conn:
+            for type_name, wanted in expected.items():
+                rows = await conn.execute(text(
+                    "SELECT e.enumlabel FROM pg_enum e "
+                    "JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = :name"
+                ), {"name": type_name})
+                present = {row[0] for row in rows}
+                if not present:
+                    # Нативного типа нет — значит колонка varchar и принимает что угодно.
+                    continue
+                missing = wanted - present
+                if missing:
+                    problems.append(f"{type_name}: в БД нет значений {sorted(missing)}")
+    except Exception as exc:  # недоступная БД — не повод падать здесь
+        logger.warning(f"Не удалось сверить схему enum: {exc}")
+        return
+
+    if problems:
+        schema_stale_reason = "; ".join(problems)
+        logger.error(
+            f"❌ Схема БД отстала от кода: {schema_stale_reason}. "
+            f"Примените миграции: bash scripts/run-migrations.sh"
+        )
+        if os.getenv("ALLOW_STALE_SCHEMA") == "1":
+            logger.warning("⚠️ ALLOW_STALE_SCHEMA=1 — запускаемся несмотря на расхождение")
+            schema_stale_reason = None
+
+
 async def init_models():
     """Создаёт таблицы. Вызывается из run.py до старта бота."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await verify_enum_schema()
