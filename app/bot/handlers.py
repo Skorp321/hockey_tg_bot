@@ -265,6 +265,14 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )).scalars().first()
 
         if existing_reg:
+            # Игрока мог внести администратор — тогда строка есть, но подтверждения
+            # не было. Нажатие «Записаться» как раз и является подтверждением.
+            if not existing_reg.self_registered:
+                existing_reg.self_registered = True
+                await session.commit()
+                schedule_roster_update(training.id)
+                await query.answer("Запись подтверждена!")
+                return
             await query.answer("Вы уже записаны на эту тренировку")
             return
 
@@ -303,6 +311,7 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
             jersey_type=user_prefs.preferred_jersey_type if user_prefs else None,
             goalkeeper=user_prefs.goalkeeper if user_prefs else False,
             paid=covered_by_pass,
+            self_registered=True,
         )
 
         try:

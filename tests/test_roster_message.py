@@ -139,7 +139,7 @@ async def test_update_edits_when_roster_changes(db, bot):
     async with db() as s:
         s.add(Registration(training_id=training_id, user_id=1001, username="alice",
                            display_name="Иванова Алиса", registered_at=datetime.now(),
-                           goalkeeper=False, paid=False))
+                           goalkeeper=False, paid=False, self_registered=True))
         await s.commit()
 
     assert await rm.update_roster_message(training_id) is True
@@ -153,7 +153,7 @@ async def test_not_modified_is_treated_as_success(db, bot):
     async with db() as s:
         s.add(Registration(training_id=training_id, user_id=1001, username="alice",
                            display_name="Иванова Алиса", registered_at=datetime.now(),
-                           goalkeeper=False, paid=False))
+                           goalkeeper=False, paid=False, self_registered=True))
         await s.commit()
 
     bot.edit_errors.append(BadRequest("Message is not modified"))
@@ -166,7 +166,7 @@ async def test_lost_message_is_republished(db, bot):
     async with db() as s:
         s.add(Registration(training_id=training_id, user_id=1001, username="alice",
                            display_name="Иванова Алиса", registered_at=datetime.now(),
-                           goalkeeper=False, paid=False))
+                           goalkeeper=False, paid=False, self_registered=True))
         await s.commit()
 
     bot.edit_errors.append(BadRequest("Message to edit not found"))
@@ -184,7 +184,7 @@ async def test_past_training_is_not_republished(db, bot):
     async with db() as s:
         s.add(Registration(training_id=training_id, user_id=1001, username="alice",
                            display_name="Иванова Алиса", registered_at=datetime.now(),
-                           goalkeeper=False, paid=False))
+                           goalkeeper=False, paid=False, self_registered=True))
         await s.commit()
 
     bot.edit_errors.append(BadRequest("Message to edit not found"))
@@ -198,7 +198,7 @@ async def test_forbidden_disables_further_attempts(db, bot):
     async with db() as s:
         s.add(Registration(training_id=training_id, user_id=1001, username="alice",
                            display_name="Иванова Алиса", registered_at=datetime.now(),
-                           goalkeeper=False, paid=False))
+                           goalkeeper=False, paid=False, self_registered=True))
         await s.commit()
 
     bot.edit_errors.append(Forbidden("Bot was kicked"))
@@ -220,7 +220,7 @@ async def test_retry_after_is_retried_once(db, bot, monkeypatch):
     async with db() as s:
         s.add(Registration(training_id=training_id, user_id=1001, username="alice",
                            display_name="Иванова Алиса", registered_at=datetime.now(),
-                           goalkeeper=False, paid=False))
+                           goalkeeper=False, paid=False, self_registered=True))
         await s.commit()
 
     async def no_sleep(_seconds):

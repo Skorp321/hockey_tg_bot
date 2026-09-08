@@ -627,6 +627,9 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                     ${participant.roster_member
                         ? '<span class="badge bg-primary ms-2" title="Игрок в постоянном составе — попадает в список тренировки">В составе</span>'
                         : '<span class="badge bg-secondary ms-2" title="Не в составе: в опубликованном списке попадёт в резерв. Нажмите «Запомнить», чтобы добавить">Резерв</span>'}
+                    ${participant.self_registered
+                        ? '<span class="badge bg-success ms-2" title="Игрок сам нажал «Записаться» — в списке у него стоит галочка">✅ Подтвердил</span>'
+                        : '<span class="badge bg-light text-dark border ms-2" title="Внесён администратором. Галочка появится, когда игрок сам нажмёт «Записаться»">Не подтвердил</span>'}
                     <br>
                     <small class="text-muted">
                         Записался: ${participant.registered_at}
@@ -687,6 +690,9 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                     ${participant.roster_member
                         ? '<span class="badge bg-primary ms-2" title="Игрок в постоянном составе — попадает в список тренировки">В составе</span>'
                         : '<span class="badge bg-secondary ms-2" title="Не в составе: в опубликованном списке попадёт в резерв. Нажмите «Запомнить», чтобы добавить">Резерв</span>'}
+                    ${participant.self_registered
+                        ? '<span class="badge bg-success ms-2" title="Игрок сам нажал «Записаться» — в списке у него стоит галочка">✅ Подтвердил</span>'
+                        : '<span class="badge bg-light text-dark border ms-2" title="Внесён администратором. Галочка появится, когда игрок сам нажмёт «Записаться»">Не подтвердил</span>'}
                     <br>
                     <small class="text-muted">
                         Записался: ${participant.registered_at}

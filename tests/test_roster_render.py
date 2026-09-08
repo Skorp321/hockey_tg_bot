@@ -178,3 +178,19 @@ def test_telegram_length_counts_utf16_units():
     assert telegram_length("🟦") == 2
     assert telegram_length("ab") == 2
     assert len("🟦") == 1
+
+
+def test_checkmark_means_confirmed_not_merely_listed():
+    """Галочка = «человек подтвердил, что придёт», а не «есть строка в базе».
+
+    Список показывает, кто ДОЛЖЕН быть на тренировке. Запись мог создать
+    администратор через «Быстрое добавление» — это не подтверждение, и галочки
+    у такого игрока быть не должно.
+    """
+    view = RosterView(date_line="1.01 Четверг", groups=[[
+        RosterLine(square="⬜️", name="Внесён админом", registered=False),
+        RosterLine(square="⬜️", name="Подтвердил сам", registered=True),
+    ]])
+    lines = render_roster_text(view).splitlines()
+    assert "⬜️Внесён админом" in lines, "у неподтвердившего галочки быть не должно"
+    assert "⬜️Подтвердил сам ✅" in lines

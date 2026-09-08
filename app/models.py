@@ -111,6 +111,10 @@ class Registration(Base):
     goalkeeper = Column(Boolean, default=False, nullable=False)  # Поле для обозначения вратаря
     paid = Column(Boolean, default=False, nullable=False)  # Поле для отметки "Оплатил тренировку"
     last_payment_reminder = Column(DateTime, nullable=True)  # Время последнего напоминания об оплате
+    # Нажал ли игрок «Записаться» сам. Запись, созданную администратором через
+    # «Быстрое добавление», это не считает подтверждением: список показывает, кто
+    # ДОЛЖЕН быть на тренировке, а галочка — кто подтвердил, что придёт.
+    self_registered = Column(Boolean, default=False, nullable=False)
     
     training = relationship('Training', back_populates='registrations')
 

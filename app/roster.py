@@ -332,7 +332,9 @@ async def build_roster_view(session, training: Training, settings=None) -> Roste
             square=GOALKEEPER_SQUARE,
             name=name,
             has_pass=has_pass,
-            registered=registration is not None,
+            # Галочка означает «человек подтвердил, что придёт», а не «есть строка
+            # в базе»: запись мог создать администратор, внося состав руками.
+            registered=bool(registration is not None and registration.self_registered),
             # Абонемент закрывает оплату всех тренировок месяца, поэтому ₽ ставится
             # и тогда, когда флаг в регистрации почему-то не проставился.
             paid=bool(registration is not None and (registration.paid or has_pass)),
@@ -386,7 +388,7 @@ async def build_roster_view(session, training: Training, settings=None) -> Roste
             square="",
             name=name,
             has_pass=has_pass,
-            registered=True,
+            registered=bool(registration.self_registered),
             paid=bool(registration.paid or has_pass),
         ))
 

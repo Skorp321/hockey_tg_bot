@@ -276,6 +276,8 @@ async def get_participants(
             'paid': reg.paid or has_pass,
             'roster_member': reg.user_id in roster_ids,
             'has_pass': has_pass,
+            # Подтвердил ли игрок сам, а не был внесён администратором
+            'self_registered': reg.self_registered,
         })
 
     # Порядок раньше не задавался вообще: его определял Postgres, и он не был
