@@ -56,3 +56,48 @@ def test_roster_membership_is_visible(html):
 def test_preview_uses_textcontent_not_innerhtml(html):
     """Текст списка содержит фамилии от людей — вставлять его как HTML нельзя."""
     assert "textEl.textContent = data.text" in html
+
+
+def _render(name, context):
+    """Рендерит шаблон без приложения и БД — нужен только сам текст."""
+    from jinja2 import Environment, FileSystemLoader
+    env = Environment(loader=FileSystemLoader(str(TEMPLATE.parent)))
+    return env.get_template(name).render(**context)
+
+
+def _inline_scripts(html):
+    import re
+    return "\n;\n".join(re.findall(r"<script>(.*?)</script>", html, re.S))
+
+
+@pytest.mark.parametrize("name, context", [
+    ("schedule.html", {
+        "upcoming_trainings": [], "past_trainings": [],
+        "positions": [("lw", "ЛН"), ("c", "Ц")], "settings": {},
+    }),
+    ("roster.html", {
+        "players": [], "jerseys": [("light", "Белый")],
+        "positions": [("lw", "ЛН")], "roster_count": 0, "pass_month": "сентябрь",
+    }),
+])
+def test_inline_js_parses(name, context, tmp_path):
+    """Инлайновый JS должен быть синтаксически корректным.
+
+    Страница расписания — две тысячи строк JS внутри шаблона, без сборки и без
+    другого покрытия. Одна незакрытая шаблонная строка ломает её целиком, и узнать
+    об этом можно только открыв страницу в браузере.
+    """
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node не установлен — проверка синтаксиса пропущена")
+
+    code = _inline_scripts(_render(name, context))
+    assert code.strip(), f"в {name} не нашлось инлайнового JS"
+
+    path = tmp_path / "page.js"
+    path.write_text(code, encoding="utf-8")
+    result = subprocess.run([node, "--check", str(path)], capture_output=True, text=True)
+    assert result.returncode == 0, f"{name}: синтаксическая ошибка\n{result.stderr[:800]}"
