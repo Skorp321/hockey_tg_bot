@@ -22,6 +22,7 @@ from ..models import (
     RepeatType,
     SeasonPass,
     TrainingMessage,
+    PassOffer,
 )
 from ..database import get_db, session_scope
 from ..roster import (
@@ -1270,6 +1271,83 @@ async def publish_roster_message(
         )
     except Exception as e:
         logger.error(f"Error publishing roster: {e}")
+        return json_error(e, 500)
+
+
+@router.delete('/players/{user_id}')
+async def delete_player(
+    user_id: int,
+    force: bool = False,
+    session: AsyncSession = Depends(get_db),
+    _: bool = Depends(require_login),
+):
+    """Удаляет игрока из базы вместе со всем, что на нём висит.
+
+    Внешних ключей на players.user_id нет, поэтому связанные строки надо убирать
+    руками — иначе останутся предпочтения, абонементы и регистрации, из-за которых
+    удалённый игрок продолжит появляться в резерве опубликованных списков.
+
+    Если игрок записан на будущую тренировку, без force удаление отклоняется:
+    он может стоять в уже опубликованном списке, и молча выдёргивать его оттуда
+    неправильно. После удаления затронутые списки обновляются.
+    """
+    try:
+        player = (await session.execute(
+            select(Player).where(Player.user_id == user_id)
+        )).scalars().first()
+        if not player:
+            return json_error('Игрок не найден', 404)
+
+        name = player.display_name or player.username or 'Без имени'
+
+        registrations = (await session.execute(
+            select(Registration).where(Registration.user_id == user_id)
+        )).scalars().all()
+
+        future_ids = set()
+        if registrations:
+            future_ids = set((await session.execute(
+                select(Training.id)
+                .where(Training.id.in_([r.training_id for r in registrations]))
+                .where(Training.date_time > datetime.now())
+            )).scalars().all())
+
+        if future_ids and not force:
+            return JSONResponse(status_code=409, content={
+                'success': False,
+                'requires_force': True,
+                'future_registrations': len(future_ids),
+                'error': (
+                    f'{name} записан на будущие тренировки ({len(future_ids)}). '
+                    f'Удаление снимет эти записи и обновит опубликованные списки.'
+                ),
+            })
+
+        for registration in registrations:
+            await session.delete(registration)
+
+        for model in (UserPreferences, TeamAssignment, SeasonPass, PassOffer):
+            rows = (await session.execute(
+                select(model).where(model.user_id == user_id)
+            )).scalars().all()
+            for row in rows:
+                await session.delete(row)
+
+        await session.delete(player)
+        await session.commit()
+
+        for training_id in future_ids:
+            schedule_roster_update(training_id)
+
+        logger.info(f"🗑️ Игрок {name} ({user_id}) удалён из базы")
+        return {
+            'success': True,
+            'message': f'{name} удалён из базы',
+            'removed_registrations': len(registrations),
+        }
+    except Exception as e:
+        logger.error(f"Error deleting player: {e}")
+        await session.rollback()
         return json_error(e, 500)
 
 

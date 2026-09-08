@@ -1358,8 +1358,8 @@ function loadQuickAddPlayers(trainingId) {
                     html += `
                         <div class="col-md-6 mb-3">
                             <div class="card">
-                                <div class="card-body">
-                                    <div class="form-check">
+                                <div class="card-body d-flex justify-content-between align-items-start gap-2">
+                                    <div class="form-check flex-grow-1">
                                         <input class="form-check-input player-checkbox" type="checkbox" 
                                                value="${player.user_id}" id="player-${player.user_id}"
                                                data-username="${player.username || ''}"
@@ -1382,6 +1382,11 @@ function loadQuickAddPlayers(trainingId) {
                                             </small>
                                         </label>
                                     </div>
+                                    <button type="button" class="btn btn-sm btn-outline-danger flex-shrink-0"
+                                            onclick="deletePlayer(${player.user_id}, this)"
+                                            title="Удалить игрока из базы вместе с его записями и настройками">
+                                        Удалить
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -1406,6 +1411,56 @@ function loadQuickAddPlayers(trainingId) {
         .catch(error => {
             console.error('Error:', error);
             content.innerHTML = '<div class="alert alert-danger">Ошибка загрузки списка игроков</div>';
+        });
+}
+
+// Удаление игрока из базы. Необратимо, поэтому подтверждение спрашивается всегда,
+// а при записях на будущие тренировки — второй раз, уже с их количеством:
+// игрок может стоять в уже опубликованном списке.
+function deletePlayer(userId, button) {
+    const card = button.closest('.col-md-6');
+    const name = card ? card.querySelector('strong').textContent.trim() : 'игрока';
+
+    if (!confirm(`Удалить ${name} из базы?\n\nБудут удалены записи на тренировки, ` +
+                 `сохранённые цвет и амплуа, а также абонементы. Действие необратимо.`)) {
+        return;
+    }
+
+    const send = (force) => fetch(`/players/${userId}${force ? '?force=true' : ''}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    }).then(response => response.json().then(data => ({ status: response.status, data })));
+
+    button.disabled = true;
+    send(false)
+        .then(({ status, data }) => {
+            if (data.success) {
+                if (card) card.remove();
+                updateAddButton();
+                return;
+            }
+            if (status === 409 && data.requires_force) {
+                if (confirm(`${data.error}\n\nВсё равно удалить?`)) {
+                    return send(true).then(({ data: forced }) => {
+                        if (forced.success) {
+                            if (card) card.remove();
+                            updateAddButton();
+                        } else {
+                            alert('Ошибка: ' + (forced.error || 'не удалось удалить'));
+                            button.disabled = false;
+                        }
+                    });
+                }
+                button.disabled = false;
+                return;
+            }
+            alert('Ошибка: ' + (data.error || 'не удалось удалить'));
+            button.disabled = false;
+        })
+        .catch(error => {
+            console.error(error);
+            alert('Не удалось удалить игрока');
+            button.disabled = false;
         });
 }
 
