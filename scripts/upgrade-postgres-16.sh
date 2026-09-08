@@ -16,7 +16,8 @@
 #                       токеном перехватит апдейты у продакшен-экземпляра;
 #                       в деплое приложение поднимается следующим шагом)
 #
-# Скрипт идемпотентен: если данные уже в формате 16, он сразу выходит с кодом 0.
+# Скрипт идемпотентен и умеет доводить до конца прерванную миграцию: если данные
+# уже в формате 16, но база пустая, а в backups/ лежит дамп - он восстановит его.
 # Поэтому его безопасно вызывать при каждом деплое.
 #
 # Откат: см. инструкцию, которую скрипт печатает в конце.
@@ -74,20 +75,136 @@ SELECT string_agg(format('%s=%s', tbl, cnt), ',' ORDER BY tbl) FROM (
   WHERE c.relkind = 'r' AND n.nspname = 'public'
 ) t;"
 
+TABLE_COUNT_QUERY="
+SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind = 'r' AND n.nspname = 'public';"
+
 UPPER_QUERY="
 SELECT count(*) FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
 WHERE t.typname IN ('jerseytype','positiontype') AND e.enumlabel <> lower(e.enumlabel);"
 
-# --- 1. Текущая версия данных
-CURRENT=$(docker run --rm -v "${VOLUME}":/d alpine cat /d/PG_VERSION 2>/dev/null | tr -d '[:space:]' || true)
-[ -n "$CURRENT" ] || fail "❌ Не удалось прочитать PG_VERSION из volume '$VOLUME'"
+# Ждём, пока БД РЕАЛЬНО отвечает на запрос, а не просто слушает сокет.
+#
+# Одного pg_isready мало - он был причиной падения деплоя 2026-09-07:
+# docker-entrypoint во время initdb поднимает временный сервер ДО того, как
+# создаст POSTGRES_DB, и pg_isready на нём уже отвечает "accepting connections".
+# Скрипт шёл дальше и падал на 'database "training_bot" does not exist'.
+# Плюс сразу после создания БД временный сервер останавливается перед запуском
+# настоящего - там есть второе окно отказа. Поэтому требуем три успешных
+# SELECT 1 подряд с паузой: это гарантированно перекрывает оба окна.
+wait_db_ready() {
+    local streak=0 i
+    for i in $(seq 1 120); do
+        if "$@" -tAc 'SELECT 1' >/dev/null 2>&1; then
+            streak=$((streak + 1))
+            [ "$streak" -ge 3 ] && return 0
+        else
+            streak=0
+        fi
+        sleep 1
+    done
+    return 1
+}
 
-info "📊 Текущая версия данных: PostgreSQL ${CURRENT}"
-if [ "$CURRENT" = "16" ]; then
-    ok "✅ Данные уже в формате PostgreSQL 16, миграция не требуется"
+compose_psql()  { $COMPOSE exec -T db psql -U "$DB_USER" -d "$DB_NAME" "$@"; }
+compose_query() { compose_psql -At -c "$1" | tr -d '\r'; }
+
+validate_dump() {
+    local f="$1"
+    [ -s "$f" ] || fail "❌ Дамп пустой: $f"
+    grep -q "CREATE TABLE" "$f" || fail "❌ В дампе нет CREATE TABLE: $f"
+}
+
+restore_dump() {
+    local f="$1"
+    info "📥 Восстановление дампа: $f"
+    compose_psql -v ON_ERROR_STOP=1 -q < "$f" \
+        || fail "❌ Ошибка восстановления из $f"
+    compose_psql -c "ANALYZE;" >/dev/null
+}
+
+# Приведение enum к нижнему регистру.
+# В части баз positiontype/jerseytype хранят метки в ВЕРХНЕМ регистре (FORWARD,
+# DEFENDER), а модели ожидают значения (forward, defender). Python-фолбэк
+# _EnumByValueOrName на PostgreSQL не срабатывает: SQLAlchemy адаптирует Enum к
+# postgresql.ENUM и теряет подкласс. Из-за этого список участников падает с
+# LookupError. Чиним данными - тем же скриптом, что лежит в репозитории.
+fix_enum_case() {
+    local upper
+    upper=$(compose_query "$UPPER_QUERY")
+    if [ "${upper:-0}" != "0" ]; then
+        info "🔧 Меток enum в верхнем регистре: ${upper}. Применяем fix_enum_lowercase.sql..."
+        compose_psql -v ON_ERROR_STOP=1 -q < scripts/fix_enum_lowercase.sql \
+            || fail "❌ Не удалось привести enum к нижнему регистру"
+        local still
+        still=$(compose_query "$UPPER_QUERY")
+        [ "${still:-1}" = "0" ] || fail "❌ Метки в верхнем регистре остались (${still})"
+        ok "✅ enum приведены к нижнему регистру"
+    else
+        ok "✅ enum уже в нижнем регистре, правка не требуется"
+    fi
+}
+
+start_app_if_needed() {
+    if [ "${SKIP_APP_START:-0}" = "1" ]; then
+        info "⏭️  SKIP_APP_START=1 — бот не запускается, поднята только БД"
+    else
+        info "🚀 Запуск приложения..."
+        $COMPOSE up -d
+    fi
+}
+
+# --- 1. Текущая версия данных.
+# Пустая строка = volume пустой (свежая установка), инициализацию сделает compose.
+CURRENT=$(docker run --rm -v "${VOLUME}":/d alpine cat /d/PG_VERSION 2>/dev/null | tr -d '[:space:]' || true)
+
+if [ -z "$CURRENT" ]; then
+    info "📊 Volume '$VOLUME' пуст — свежая установка"
+else
+    info "📊 Текущая версия данных: PostgreSQL ${CURRENT}"
+fi
+
+# --- 2. Данные уже в формате 16 (или volume пуст).
+# Отдельно проверяем, что база НЕ пустая: миграция могла оборваться между
+# очисткой volume и восстановлением дампа. Тогда PG_VERSION уже 16, но данных нет,
+# и наивный "миграция не требуется" поднял бы приложение на пустой базе.
+if [ -z "$CURRENT" ] || [ "$CURRENT" = "16" ]; then
+    info "🚀 Запуск PostgreSQL 16 для проверки состояния базы..."
+    $COMPOSE up -d db
+    wait_db_ready $COMPOSE exec -T db psql -U "$DB_USER" -d "$DB_NAME" \
+        || { $COMPOSE logs db 2>&1 | tail -10; fail "❌ PostgreSQL 16 не отвечает"; }
+
+    TABLES=$(compose_query "$TABLE_COUNT_QUERY")
+    if [ "${TABLES:-0}" != "0" ]; then
+        ok "✅ Данные уже в формате PostgreSQL 16 (таблиц: ${TABLES}), миграция не требуется"
+        exit 0
+    fi
+
+    LATEST_DUMP=$(ls -1t "${BACKUP_DIR}"/pre_pg16_upgrade_*.sql 2>/dev/null | head -1 || true)
+
+    if [ -z "$LATEST_DUMP" ]; then
+        ok "✅ База пуста и дампов нет — чистая установка, схему создаст приложение"
+        exit 0
+    fi
+
+    echo
+    info "⚠️  База PostgreSQL 16 ПУСТАЯ, но найден дамп предыдущей миграции."
+    info "    Похоже, миграция оборвалась после очистки volume. Доводим до конца."
+    validate_dump "$LATEST_DUMP"
+    restore_dump "$LATEST_DUMP"
+    fix_enum_case
+
+    RESTORED=$(compose_query "$COUNT_QUERY")
+    echo "   строк после восстановления: ${RESTORED:-(пусто)}"
+    [ -n "$RESTORED" ] || fail "❌ После восстановления база всё ещё пуста"
+
+    start_app_if_needed
+    echo
+    ok "✅ Прерванная миграция завершена, данные восстановлены"
     exit 0
 fi
 
+# --- 3. Полная миграция со старой версии.
 echo
 info "⚠️  Будет выполнено:"
 echo "   1. Дамп базы '${DB_NAME}' контейнером postgres:${CURRENT}-alpine"
@@ -102,7 +219,7 @@ else
     [ "$confirm" = "yes" ] || { info "Отменено"; exit 0; }
 fi
 
-# --- 2. Дамп контейнером СТАРОЙ версии
+# --- 3a. Дамп контейнером СТАРОЙ версии
 info "🛑 Останавливаем стек..."
 $COMPOSE down >/dev/null 2>&1 || true
 
@@ -112,83 +229,46 @@ docker run -d --name "$TMP_OLD" \
     -e POSTGRES_USER="$DB_USER" -e POSTGRES_PASSWORD="$DB_PASS" -e POSTGRES_DB="$DB_NAME" \
     "postgres:${CURRENT}-alpine" >/dev/null
 
-for i in $(seq 1 60); do
-    docker exec "$TMP_OLD" pg_isready -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1 && break
-    if [ "$i" = "60" ]; then
-        docker logs "$TMP_OLD" 2>&1 | tail -5
-        fail "❌ PostgreSQL ${CURRENT} не поднялся. Данные не тронуты."
-    fi
-    sleep 1
-done
+wait_db_ready docker exec "$TMP_OLD" psql -U "$DB_USER" -d "$DB_NAME" \
+    || { docker logs "$TMP_OLD" 2>&1 | tail -10; fail "❌ PostgreSQL ${CURRENT} не поднялся. Данные не тронуты."; }
 ok "✅ Исходная БД поднята"
 
 info "📸 Количество строк до миграции..."
 COUNTS_BEFORE=$(docker exec "$TMP_OLD" psql -U "$DB_USER" -d "$DB_NAME" -At -c "$COUNT_QUERY" | tr -d '\r')
 echo "   до: ${COUNTS_BEFORE:-(пусто)}"
 
-UPPER_BEFORE=$(docker exec "$TMP_OLD" psql -U "$DB_USER" -d "$DB_NAME" -At -c "$UPPER_QUERY" | tr -d '\r')
-
 info "📦 Создание дампа..."
 docker exec "$TMP_OLD" pg_dump -U "$DB_USER" --clean --if-exists "$DB_NAME" > "$DUMP_FILE"
-
-[ -s "$DUMP_FILE" ] || fail "❌ Дамп пустой — миграция прервана, данные не тронуты"
-grep -q "CREATE TABLE" "$DUMP_FILE" \
-    || fail "❌ В дампе нет CREATE TABLE — миграция прервана, данные не тронуты"
+validate_dump "$DUMP_FILE"
 ok "✅ Дамп: ${DUMP_FILE} ($(du -h "$DUMP_FILE" | cut -f1))"
 
 docker rm -f "$TMP_OLD" >/dev/null
 
-# --- 3. Копия старого volume для мгновенного отката
+# --- 3b. Копия старого volume для мгновенного отката
 info "🗄️  Копия старого volume -> ${VOLUME_BACKUP}..."
 docker volume create "$VOLUME_BACKUP" >/dev/null
 docker run --rm -v "${VOLUME}":/from:ro -v "${VOLUME_BACKUP}":/to \
     alpine sh -c 'cd /from && cp -a . /to/'
 ok "✅ Откат возможен из volume '${VOLUME_BACKUP}'"
 
-# --- 4. Чистый volume под PG16
+# --- 3c. Чистый volume под PG16
 info "🧹 Очистка volume '${VOLUME}'..."
 docker volume rm "$VOLUME" >/dev/null
 docker volume create "$VOLUME" >/dev/null
 
 info "🚀 Запуск PostgreSQL 16..."
 $COMPOSE up -d db
-for i in $(seq 1 90); do
-    $COMPOSE exec -T db pg_isready -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1 && break
-    if [ "$i" = "90" ]; then
-        $COMPOSE logs db 2>&1 | tail -5
-        fail "❌ PostgreSQL 16 не поднялся. Откат: см. '${VOLUME_BACKUP}'"
-    fi
-    sleep 1
-done
+wait_db_ready $COMPOSE exec -T db psql -U "$DB_USER" -d "$DB_NAME" \
+    || { $COMPOSE logs db 2>&1 | tail -10; fail "❌ PostgreSQL 16 не поднялся. Откат: см. '${VOLUME_BACKUP}'"; }
 
-NEW_VERSION=$($COMPOSE exec -T db psql -U "$DB_USER" -d "$DB_NAME" -At -c "SHOW server_version;" | tr -d '\r')
+NEW_VERSION=$(compose_query "SHOW server_version;")
 ok "✅ Поднялся PostgreSQL ${NEW_VERSION}"
 
-# --- 5. Восстановление
-info "📥 Восстановление дампа..."
-$COMPOSE exec -T db psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -q < "$DUMP_FILE" \
-    || fail "❌ Ошибка восстановления. Откат: см. '${VOLUME_BACKUP}'"
+# --- 3d. Восстановление
+restore_dump "$DUMP_FILE"
+fix_enum_case
 
-$COMPOSE exec -T db psql -U "$DB_USER" -d "$DB_NAME" -c "ANALYZE;" >/dev/null
-
-# --- 5b. Приведение enum к нижнему регистру
-# В части баз positiontype/jerseytype хранят метки в ВЕРХНЕМ регистре (FORWARD,
-# DEFENDER), а модели ожидают значения (forward, defender). Python-фолбэк
-# _EnumByValueOrName на PostgreSQL не срабатывает: SQLAlchemy адаптирует Enum к
-# postgresql.ENUM и теряет подкласс. Из-за этого список участников падает с
-# LookupError. Чиним данными - тем же скриптом, что лежит в репозитории.
-if [ "${UPPER_BEFORE:-0}" != "0" ]; then
-    info "🔧 Меток enum в верхнем регистре: ${UPPER_BEFORE}. Применяем fix_enum_lowercase.sql..."
-    $COMPOSE exec -T db psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -q < scripts/fix_enum_lowercase.sql \
-        || fail "❌ Не удалось привести enum к нижнему регистру. Откат: см. '${VOLUME_BACKUP}'"
-    STILL=$($COMPOSE exec -T db psql -U "$DB_USER" -d "$DB_NAME" -At -c "$UPPER_QUERY" | tr -d '\r')
-    [ "${STILL:-1}" = "0" ] || fail "❌ Метки в верхнем регистре остались (${STILL}). Откат: см. '${VOLUME_BACKUP}'"
-    ok "✅ enum приведены к нижнему регистру"
-else
-    ok "✅ enum уже в нижнем регистре, правка не требуется"
-fi
-
-COUNTS_AFTER=$($COMPOSE exec -T db psql -U "$DB_USER" -d "$DB_NAME" -At -c "$COUNT_QUERY" | tr -d '\r')
+COUNTS_AFTER=$(compose_query "$COUNT_QUERY")
 echo "   после: ${COUNTS_AFTER:-(пусто)}"
 
 if [ "$COUNTS_BEFORE" = "$COUNTS_AFTER" ]; then
@@ -200,15 +280,7 @@ else
     echo -e "${RED}   Проверьте данные вручную перед запуском бота.${NC}"
 fi
 
-# --- 6. Приложение
-# SKIP_APP_START=1 нужен локально: бот с боевым TELEGRAM_TOKEN начнёт polling
-# и перехватит апдейты у продакшен-экземпляра.
-if [ "${SKIP_APP_START:-0}" = "1" ]; then
-    info "⏭️  SKIP_APP_START=1 — бот не запускается, поднята только БД"
-else
-    info "🚀 Запуск приложения..."
-    $COMPOSE up -d
-fi
+start_app_if_needed
 
 echo
 ok "✅ Миграция на PostgreSQL 16 завершена"

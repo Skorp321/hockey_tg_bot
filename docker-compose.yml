@@ -40,7 +40,10 @@ services:
     networks:
       - bot_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-training_bot}"]
+      # Именно SELECT 1, а не pg_isready: во время initdb временный сервер уже
+      # отвечает на сокете, но POSTGRES_DB ещё не создана, и pg_isready считает
+      # это готовностью. Бот стартовал бы на несуществующей базе.
+      test: ["CMD-SHELL", "psql -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-training_bot} -tAc 'SELECT 1' || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5
