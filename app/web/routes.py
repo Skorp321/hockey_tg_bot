@@ -21,6 +21,7 @@ from ..models import (
     ScheduledMessage,
     RepeatType,
     SeasonPass,
+    TrainingMessage,
 )
 from ..database import get_db, session_scope
 from ..roster import (
@@ -30,6 +31,15 @@ from ..roster import (
 )
 from ..settings import as_int, get_settings
 from ..config import Config
+from ..bot.weekly_posts import send_weekly_training_post
+from ..bot.roster_message import (
+    delete_roster_message, publish_roster, schedule_roster_update,
+)
+from .security import require_login, json_error
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
 
 # Наборы допустимых значений выводятся из перечислений: при добавлении цвета или амплуа
 # правку не придётся повторять в пяти местах.
@@ -47,12 +57,6 @@ def _jersey_rank(value):
 
 def _position_rank(value):
     return _POSITION_RANK_BY_VALUE.get(value, len(_POSITION_RANK_BY_VALUE))
-from ..bot.weekly_posts import send_weekly_training_post
-from .security import require_login, json_error
-
-logger = logging.getLogger(__name__)
-
-router = APIRouter()
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
 
@@ -167,7 +171,10 @@ async def add_training(
         session.add(training)
         await session.commit()
 
-        return {'success': True}
+        # Публикуем список сразу. Сбой Telegram не должен мешать созданию тренировки:
+        # список всегда можно опубликовать кнопкой вручную.
+        published = await publish_roster(training.id)
+        return {'success': True, 'roster_published': published}
     except Exception as e:
         logger.error(f"Error adding training: {e}")
         await session.rollback()
@@ -185,10 +192,13 @@ async def delete_training(
         .options(
             selectinload(Training.registrations),
             selectinload(Training.team_assignments),
+            selectinload(Training.messages),
         )
         .where(Training.id == training_id)
     )).scalars().first()
     if training:
+        # Сообщение убираем до удаления записи: после неё мы уже не узнаем message_id.
+        await delete_roster_message(training_id)
         await session.delete(training)
         await session.commit()
     return {'success': True}
@@ -366,6 +376,7 @@ async def save_jerseys(
         # после успешной отправки уведомления
 
         await session.commit()
+        schedule_roster_update(training_id)
 
         return {'success': True, 'message': 'Майки и команды сохранены в базе данных'}
 
@@ -608,6 +619,7 @@ async def send_notifications(
 
         # Сохраняем изменения в базе данных
         await session.commit()
+        schedule_roster_update(training_id)
 
         if success_count > 0:
             return {
@@ -803,6 +815,7 @@ async def bulk_register_players(
                 added_count += 1
 
         await session.commit()
+        schedule_roster_update(training_id)
 
         return {
             'success': True,
@@ -982,6 +995,7 @@ async def remove_participant(
         # Удаляем регистрацию
         await session.delete(registration)
         await session.commit()
+        schedule_roster_update(training_id)
 
         return {
             'success': True,
@@ -1051,6 +1065,7 @@ async def rename_participant(
         user_prefs.goalkeeper = is_goalkeeper
 
         await session.commit()
+        schedule_roster_update(training_id)
 
         return {
             'success': True,
@@ -1111,6 +1126,8 @@ async def remember_participant_preferences(
             user_prefs.preferred_position_type = PositionType(position_type)
 
         await session.commit()
+        # Предпочтения задают цвет и амплуа, а значит и порядок строк в списке
+        schedule_roster_update(training_id)
 
         participant_name = registration.display_name or registration.username or 'Без имени'
         return {
@@ -1150,6 +1167,7 @@ async def mark_participant_paid(
         registration.paid = True
 
         await session.commit()
+        schedule_roster_update(training_id)
 
         participant_name = registration.display_name or registration.username or 'Без имени'
 
@@ -1192,6 +1210,41 @@ async def preview_roster(
         }
     except Exception as e:
         logger.error(f"Error building roster preview: {e}")
+        return json_error(e, 500)
+
+
+@router.post('/training/{training_id}/roster/publish')
+async def publish_roster_message(
+    training_id: int,
+    session: AsyncSession = Depends(get_db),
+    _: bool = Depends(require_login),
+):
+    """Публикует список заново.
+
+    Аварийный выход на случай, когда сообщение удалили из канала, бот на момент
+    создания тренировки лежал, или у него отобрали права и строка помечена disabled.
+    """
+    try:
+        training = await session.get(Training, training_id)
+        if not training:
+            return json_error('Training not found', 404)
+
+        # Снимаем метку недоступности: раз админ жмёт кнопку, права могли вернуть.
+        rows = (await session.execute(
+            select(TrainingMessage).where(TrainingMessage.training_id == training_id)
+        )).scalars().all()
+        for row in rows:
+            row.disabled = False
+        await session.commit()
+
+        if await publish_roster(training_id, force=True):
+            return {'success': True, 'message': 'Список опубликован'}
+        return json_error(
+            'Не удалось опубликовать список. Проверьте CHANNEL_ID, права бота и логи.',
+            500,
+        )
+    except Exception as e:
+        logger.error(f"Error publishing roster: {e}")
         return json_error(e, 500)
 
 

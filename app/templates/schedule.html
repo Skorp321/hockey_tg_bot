@@ -141,6 +141,10 @@
                                 <button class="btn btn-outline-primary" onclick='showRosterPreview({{ training.id }})'>
                                     👁 Предпросмотр списка
                                 </button>
+                                <button class="btn btn-outline-secondary" onclick='publishRoster({{ training.id }})'
+                                        title="Опубликовать список в канал заново — если сообщение удалили или бот был недоступен">
+                                    📢 Опубликовать список
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -444,6 +448,27 @@ function showRosterPreview(trainingId) {
         .catch(error => {
             console.error(error);
             textEl.textContent = 'Не удалось загрузить предпросмотр';
+        });
+}
+
+// Повторная публикация: нужна, когда сообщение удалили из канала, бот лежал в момент
+// создания тренировки или у него отбирали права.
+function publishRoster(trainingId) {
+    if (!confirm('Опубликовать список в канал заново? В канале появится новое сообщение.')) {
+        return;
+    }
+    fetch(`/training/${trainingId}/roster/publish`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }
+    })
+        .then(response => response.json())
+        .then(data => {
+            alert(data.success ? 'Список опубликован' : 'Ошибка: ' + (data.error || 'неизвестная'));
+        })
+        .catch(error => {
+            console.error(error);
+            alert('Не удалось опубликовать список');
         });
 }
 

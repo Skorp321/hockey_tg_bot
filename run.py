@@ -3,6 +3,7 @@ import signal
 from app import create_app
 from app.database import init_models
 from app.bot.handlers import start_bot, check_payment_reminders
+from app.bot.roster_message import set_roster_bot, reconcile_rosters
 from hypercorn.asyncio import serve
 from hypercorn.config import Config as HyperConfig
 
@@ -61,6 +62,14 @@ async def main():
     # Отдаём бота веб-слою: /send-weekly-post использует уже запущенный экземпляр
     app.state.bot_app = bot_app
     app.state.bot = bot_app.bot if bot_app else None
+
+    # Тот же экземпляр нужен модулю списков состава: он редактирует опубликованное
+    # сообщение при каждой записи и оплате.
+    if bot_app:
+        set_roster_bot(bot_app.bot)
+        # Отложенные обновления живут в процессе, поэтому рестарт мог потерять правку.
+        # Досылаем их для будущих тренировок, у которых сообщение уже опубликовано.
+        await reconcile_rosters()
 
     # Запускаем фоновую задачу для проверки напоминаний об оплате
     async def payment_reminder_task():

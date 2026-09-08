@@ -12,6 +12,7 @@ from ..models import (
 from ..config import Config
 from ..database import session_scope
 from ..roster import POSITION_LABELS
+from .roster_message import schedule_roster_update
 from .weekly_posts import send_weekly_training_post
 
 # Настройка логирования
@@ -295,6 +296,7 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 session.add(new_player)
 
             await session.commit()
+            schedule_roster_update(training.id)
             await query.answer("Вы успешно записались на тренировку!")
 
             # Отправляем сообщение с подтверждением и деталями
@@ -490,7 +492,9 @@ async def mark_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Отмечаем как оплаченную
         registration.paid = True
+        training_id = registration.training_id
         await session.commit()
+        schedule_roster_update(training_id)
 
         await query.answer("✅ Оплата отмечена!")
 
@@ -645,8 +649,10 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
                     session.add(user_prefs)
                 user_prefs.display_name = registration.display_name
 
+            cancelled_training_id = registration.training_id
             await session.delete(registration)
             await session.commit()
+            schedule_roster_update(cancelled_training_id)
             await query.answer("Запись отменена")
             message = "Ваша запись успешно отменена"
             reply_markup = get_standard_keyboard()
@@ -862,7 +868,9 @@ async def handle_mark_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Отмечаем самую раннюю по дате неоплаченную тренировку
         earliest_registration = unpaid_registrations[0]
         earliest_registration.paid = True
+        paid_training_id = earliest_registration.training_id
         await session.commit()
+        schedule_roster_update(paid_training_id)
 
         training_date = earliest_registration.training.date_time.strftime('%d.%m.%Y %H:%M')
         await query.answer(f"✅ Оплата за {training_date} отмечена!")
@@ -893,8 +901,10 @@ async def handle_cancel_registration(update: Update, context: ContextTypes.DEFAU
         # Если только одна запись, отменяем её сразу
         if len(active_registrations) == 1:
             registration = active_registrations[0]
+            cancelled_training_id = registration.training_id
             await session.delete(registration)
             await session.commit()
+            schedule_roster_update(cancelled_training_id)
             await query.answer("✅ Запись отменена!")
             single_cancelled = True
         else:
