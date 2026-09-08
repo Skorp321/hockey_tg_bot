@@ -624,6 +624,9 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                     <strong>${index + 1}. ${participant.name}</strong>
                     <button type="button" class="btn btn-sm btn-outline-secondary ms-2 remember-prefs-btn" data-is-goalkeeper="true" onclick="event.stopPropagation(); rememberParticipantPreferences(${trainingId}, ${participant.id}, true)" title="Сохранить майку для последующих записей" ${effectiveJersey ? '' : 'disabled'}>Запомнить</button>
                     ${participant.team_assigned ? '<span class="badge bg-success ms-2">✓ Команда назначена</span>' : ''}
+                    ${participant.roster_member
+                        ? '<span class="badge bg-primary ms-2" title="Игрок в постоянном составе — попадает в список тренировки">В составе</span>'
+                        : '<span class="badge bg-secondary ms-2" title="Не в составе: в опубликованном списке попадёт в резерв. Нажмите «Запомнить», чтобы добавить">Резерв</span>'}
                     <br>
                     <small class="text-muted">
                         Записался: ${participant.registered_at}
@@ -681,6 +684,9 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                     <strong>${index + 1}. ${participant.name}</strong>
                     <button type="button" class="btn btn-sm btn-outline-secondary ms-2 remember-prefs-btn" data-is-goalkeeper="false" onclick="event.stopPropagation(); rememberParticipantPreferences(${trainingId}, ${participant.id}, false)" title="Сохранить майку и амплуа для последующих записей" ${(effectiveJersey && effectivePosition) ? '' : 'disabled'}>Запомнить</button>
                     ${participant.team_assigned ? '<span class="badge bg-success ms-2">✓ Команда назначена</span>' : ''}
+                    ${participant.roster_member
+                        ? '<span class="badge bg-primary ms-2" title="Игрок в постоянном составе — попадает в список тренировки">В составе</span>'
+                        : '<span class="badge bg-secondary ms-2" title="Не в составе: в опубликованном списке попадёт в резерв. Нажмите «Запомнить», чтобы добавить">Резерв</span>'}
                     <br>
                     <small class="text-muted">
                         Записался: ${participant.registered_at}
@@ -805,8 +811,10 @@ function rememberParticipantPreferences(trainingId, participantId, isGoalkeeper)
     const jersey_type = jerseyRadio ? jerseyRadio.value : null;
     let position_type = null;
     if (!isGoalkeeper) {
-        const positionRadio = row.querySelector('input[name^="position-type"]:checked');
-        position_type = positionRadio ? positionRadio.value : null;
+        // Амплуа теперь <select>, а не радиокнопки: селектор input[...]:checked
+        // ничего не находил, и «Запомнить» сохраняло цвет, но не амплуа.
+        const positionSelect = row.querySelector('[name^="position-type"]');
+        position_type = positionSelect && positionSelect.value ? positionSelect.value : null;
     }
     fetch(`/training/${trainingId}/participant/${participantId}/remember-preferences`, {
         method: 'POST',
@@ -817,6 +825,14 @@ function rememberParticipantPreferences(trainingId, participantId, isGoalkeeper)
     .then(response => response.json())
     .then(data => {
         if (data.success) {
+            // «Запомнить» заодно вносит игрока в состав — меняем бейдж на месте,
+            // чтобы не гадать, попадёт он в список или в резерв
+            const badge = row.querySelector('.badge.bg-secondary');
+            if (badge) {
+                badge.className = 'badge bg-primary ms-2';
+                badge.textContent = 'В составе';
+                badge.title = 'Игрок в постоянном составе — попадает в список тренировки';
+            }
             if (typeof alert !== 'undefined') alert('✅ ' + data.message);
         } else {
             alert('Ошибка: ' + (data.error || 'Не удалось сохранить'));

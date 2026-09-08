@@ -1138,6 +1138,17 @@ async def remember_participant_preferences(
             user_prefs.preferred_jersey_type = JerseyType(jersey_type)
         if not registration.goalkeeper and position_type is not None:
             user_prefs.preferred_position_type = PositionType(position_type)
+        user_prefs.goalkeeper = registration.goalkeeper
+
+        # «Запомнить» означает «это наш постоянный игрок», поэтому заодно вносим его
+        # в состав. Без этого сохранённые цвет и амплуа никак не влияли на список:
+        # он строится по флагу is_roster_member, и игрок оставался в резерве.
+        player = (await session.execute(
+            select(Player).where(Player.user_id == registration.user_id)
+        )).scalars().first()
+        if player is not None:
+            player.is_roster_member = True
+            player.goalkeeper = registration.goalkeeper
 
         await session.commit()
         # Предпочтения задают цвет и амплуа, а значит и порядок строк в списке
