@@ -94,9 +94,22 @@ jobs:
             echo ""
             echo "🏥 Checking application health..."
             
-            # Проверка health endpoint
-            HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/health)
-            
+            # Проверка health endpoint с ожиданием готовности.
+            # Приложение начинает слушать порт НЕ сразу: run.py сначала создаёт
+            # таблицы, затем поднимает телеграм-бота (до 5 попыток по 10 секунд)
+            # и только после этого запускает веб-сервер. Одиночный curl сразу
+            # после up -d - гонка по построению, из-за неё деплой падал.
+            HEALTH_STATUS=000
+            for i in $(seq 1 30); do
+              # curl сам печатает 000, когда соединиться не удалось; || true нужен,
+              # чтобы его ненулевой код возврата не считался ошибкой шага
+              HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:5000/health || true)
+              [ -n "$HEALTH_STATUS" ] || HEALTH_STATUS=000
+              [ "$HEALTH_STATUS" = "200" ] && break
+              echo "   ⏳ ждём готовности приложения ($i/30, HTTP $HEALTH_STATUS)..."
+              sleep 5
+            done
+
             if [ "$HEALTH_STATUS" = "200" ]; then
               echo "✅ Application is healthy (HTTP $HEALTH_STATUS)"
             else
