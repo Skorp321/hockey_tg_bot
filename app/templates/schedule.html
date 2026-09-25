@@ -8,7 +8,7 @@
         📢 Отправить еженедельный пост
     </button>
     <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addTrainingModal">
-        Добавить тренировку
+        Добавить событие
     </button>
 </div>
 
@@ -43,7 +43,14 @@
                 <tbody id="upcoming-trainings">
                     {% for training in upcoming_trainings %}
                     <tr>
-                        <td class="text-start">{{ training.date_time.strftime('%d.%m.%Y %H:%M') }}</td>
+                        <td class="text-start">
+                            {{ training.date_time.strftime('%d.%m.%Y %H:%M') }}
+                            {% if training.event_type == 'game' %}
+                                <span class="badge bg-danger">🏒 Игра</span>
+                            {% else %}
+                                <span class="badge bg-info text-dark">Тренировка</span>
+                            {% endif %}
+                        </td>
                         <td class="text-center">{{ training.registrations|length }}/{{ training.max_participants }}</td>
                         <td class="text-center">
                             {% set non_goalkeeper_regs = training.registrations|rejectattr('goalkeeper')|list %}
@@ -172,7 +179,14 @@
                 <tbody id="past-trainings">
                     {% for training in past_trainings %}
                     <tr>
-                        <td class="text-start">{{ training.date_time.strftime('%d.%m.%Y %H:%M') }}</td>
+                        <td class="text-start">
+                            {{ training.date_time.strftime('%d.%m.%Y %H:%M') }}
+                            {% if training.event_type == 'game' %}
+                                <span class="badge bg-danger">🏒 Игра</span>
+                            {% else %}
+                                <span class="badge bg-info text-dark">Тренировка</span>
+                            {% endif %}
+                        </td>
                         <td class="text-center">{{ training.registrations|length }}/{{ training.max_participants }}</td>
                         <td class="text-center">
                             {% set non_goalkeeper_regs = training.registrations|rejectattr('goalkeeper')|list %}
@@ -232,11 +246,18 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Добавить тренировку</h5>
+                <h5 class="modal-title">Добавить событие</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
                 <form id="addTrainingForm" method="POST">
+                    <div class="mb-3">
+                        <label for="event_type" class="form-label">Тип события</label>
+                        <select class="form-select" id="event_type" name="event_type" required>
+                            <option value="training" selected>Тренировка</option>
+                            <option value="game">Игра</option>
+                        </select>
+                    </div>
                     <div class="mb-3">
                         <label for="training_date" class="form-label">Дата</label>
                         <input type="date" class="form-control" id="training_date" name="training_date" required>
@@ -1189,6 +1210,7 @@ document.getElementById('addTrainingForm').addEventListener('submit', function(e
     const formData = new FormData();
     formData.append('date_time', date + 'T' + time);
     formData.append('max_participants', document.getElementById('max_participants').value);
+    formData.append('event_type', document.getElementById('event_type').value);
     formData.append('end_time', document.getElementById('training_end_time').value);
     formData.append('venue', document.getElementById('training_venue').value);
     formData.append('signup_deadline_text', document.getElementById('training_deadline').value);

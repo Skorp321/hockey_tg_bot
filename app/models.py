@@ -60,6 +60,11 @@ class PositionType(enum.Enum):
     LD = "ld"  # Левый защитник
     RD = "rd"  # Правый защитник
 
+# Тип события. Хранится строкой, а не нативным enum: новый тип не потребует ALTER TYPE.
+class EventType(enum.Enum):
+    TRAINING = "training"
+    GAME = "game"
+
 class RepeatType(enum.Enum):
     ONCE = "once"
     DAILY = "daily"
@@ -89,6 +94,10 @@ class Training(Base):
     id = Column(Integer, primary_key=True)
     date_time = Column(DateTime, nullable=False)
     max_participants = Column(Integer, default=10)
+    event_type = Column(
+        String(20), nullable=False,
+        default=EventType.TRAINING.value, server_default=EventType.TRAINING.value,
+    )
     # Поля шапки списка. NULL = взять значение по умолчанию из app_settings.
     end_time = Column(Time, nullable=True)  # Время окончания, вторая половина «21.30 - 23.00»
     venue = Column(String(200), nullable=True)  # Арена

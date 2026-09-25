@@ -19,7 +19,7 @@ from typing import Optional
 from sqlalchemy import select
 
 from .models import (
-    JerseyType, PositionType, Player, Registration, SeasonPass, Training, UserPreferences,
+    EventType, JerseyType, PositionType, Player, Registration, SeasonPass, Training, UserPreferences,
 )
 
 # --- Внешний вид -----------------------------------------------------------------
@@ -71,6 +71,8 @@ MARK_PAID = "₽"
 
 DEFAULT_RESERVE_SLOTS = 3
 
+GAME_LABEL = "🏒 Игра"
+
 # Telegram считает длину в кодовых единицах UTF-16, а не в символах: каждый цветной
 # квадрат стоит две единицы. Держим запас от жёсткого лимита 4096, потому что BadRequest
 # при отправке тихо остановит все последующие обновления сообщения.
@@ -91,6 +93,7 @@ class RosterLine:
 class RosterView:
     date_line: str
     time_line: str = ""
+    event_label: Optional[str] = None  # «🏒 Игра» над датой; у тренировки не выводится
     venue: Optional[str] = None
     deadline_text: Optional[str] = None
     groups: list = field(default_factory=list)   # список групп, каждая — список RosterLine
@@ -137,6 +140,8 @@ def _compose(view: RosterView, reserve: list, reserve_slots: int, note: Optional
         lines.append(f"❗️{view.deadline_text}")
         lines.append("")
 
+    if view.event_label:
+        lines.append(view.event_label)
     lines.append(view.date_line)
     if view.time_line:
         lines.append(view.time_line)
@@ -312,6 +317,7 @@ async def build_roster_view(session, training: Training, settings=None) -> Roste
     view = RosterView(
         date_line=format_date_line(training.date_time),
         time_line=format_time_line(training.date_time, training.end_time),
+        event_label=GAME_LABEL if training.event_type == EventType.GAME.value else None,
         venue=training.venue or settings.get("roster.default_venue"),
         deadline_text=training.signup_deadline_text or settings.get("roster.default_deadline_text"),
         reserve_slots=int(settings.get("roster.reserve_slots", DEFAULT_RESERVE_SLOTS)),

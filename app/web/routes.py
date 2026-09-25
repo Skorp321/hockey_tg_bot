@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..models import (
+    EventType,
     Training,
     Registration,
     JerseyType,
@@ -158,13 +159,16 @@ async def add_training(
     end_time: str = Form(None),
     venue: str = Form(None),
     signup_deadline_text: str = Form(None),
+    event_type: str = Form(EventType.TRAINING.value),
     session: AsyncSession = Depends(get_db),
     _: bool = Depends(require_login),
 ):
     try:
+        event_type = EventType(event_type or EventType.TRAINING.value).value
         training = Training(
             date_time=datetime.strptime(date_time, '%Y-%m-%dT%H:%M'),
             max_participants=int(max_participants),
+            event_type=event_type,
             end_time=datetime.strptime(end_time, '%H:%M').time() if end_time else None,
             venue=(venue or '').strip() or None,
             signup_deadline_text=(signup_deadline_text or '').strip() or None,
