@@ -23,6 +23,7 @@ from ..models import (
     RepeatType,
     SeasonPass,
     TrainingMessage,
+    TrainingDecline,
     PassOffer,
 )
 from ..database import get_db, session_scope
@@ -1332,7 +1333,7 @@ async def delete_player(
         for registration in registrations:
             await session.delete(registration)
 
-        for model in (UserPreferences, TeamAssignment, SeasonPass, PassOffer):
+        for model in (UserPreferences, TeamAssignment, SeasonPass, PassOffer, TrainingDecline):
             rows = (await session.execute(
                 select(model).where(model.user_id == user_id)
             )).scalars().all()

@@ -3,17 +3,18 @@ from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, App
 from telegram.error import NetworkError, TimedOut, BadRequest, Forbidden, Conflict
 from datetime import datetime
 import logging
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from ..models import (
     Training, Registration, UserPreferences, Player, TeamAssignment,
-    SeasonPass, PassOffer,
+    SeasonPass, PassOffer, TrainingDecline,
 )
 from ..config import Config
 from ..database import session_scope
 from ..roster import (
-    MONTHS_RU, POSITION_LABELS, has_season_pass, pass_window, period_start_for,
+    MONTHS_RU, POSITION_LABELS, build_roster_view, render_roster_text,
+    has_season_pass, pass_window, period_start_for,
 )
 from ..settings import as_int, get_settings
 from .roster_message import schedule_roster_update
@@ -81,14 +82,16 @@ def get_standard_keyboard():
     """Создает стандартную клавиатуру с основными кнопками (без записи на тренировки)"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Показать расписание", callback_data='schedule')],
-        [InlineKeyboardButton("Мои записи", callback_data='my_registrations')]
+        [InlineKeyboardButton("Мои записи", callback_data='my_registrations')],
+        [InlineKeyboardButton("👥 Кто придёт?", callback_data='view_participants')]
     ])
 
 def get_info_keyboard():
     """Создает клавиатуру только с информационными кнопками (без записи)"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Показать расписание", callback_data='schedule')],
-        [InlineKeyboardButton("Мои записи", callback_data='my_registrations')]
+        [InlineKeyboardButton("Мои записи", callback_data='my_registrations')],
+        [InlineKeyboardButton("👥 Кто придёт?", callback_data='view_participants')]
     ])
 
 async def build_pass_button(session, user_id):
@@ -265,6 +268,9 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )).scalars().first()
 
         if existing_reg:
+            await session.execute(delete(TrainingDecline).where(
+                TrainingDecline.training_id == training.id, TrainingDecline.user_id == user_id,
+            ))
             # Игрока мог внести администратор — тогда строка есть, но подтверждения
             # не было. Нажатие «Записаться» как раз и является подтверждением.
             if not existing_reg.self_registered:
@@ -273,6 +279,8 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 schedule_roster_update(training.id)
                 await query.answer("Запись подтверждена!")
                 return
+            await session.commit()
+            schedule_roster_update(training.id)
             await query.answer("Вы уже записаны на эту тренировку")
             return
 
@@ -316,6 +324,9 @@ async def register_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             session.add(registration)
+            await session.execute(delete(TrainingDecline).where(
+                TrainingDecline.training_id == training.id, TrainingDecline.user_id == user_id,
+            ))
 
             # Обновляем или создаем запись в таблице players
             existing_player = (await session.execute(
@@ -551,129 +562,67 @@ async def mark_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Сессия закрыта: show_my_registrations открывает свою собственную
     await show_my_registrations(update, context)
 
+def get_attendance_keyboard(training_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Записаться", callback_data=f'register_{training_id}'),
+         InlineKeyboardButton("➖ Не буду", callback_data=f'decline_{training_id}')],
+        [InlineKeyboardButton("🔙 Вернуться в меню", callback_data='start')],
+    ])
+
+
 async def view_training_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-
-    async with session_scope() as session:
-        # Получаем все предстоящие тренировки
-        trainings = (await session.execute(
-            select(Training)
-            .options(selectinload(Training.registrations))
-            .where(Training.date_time > datetime.now())
-            .order_by(Training.date_time)
-        )).scalars().all()
-
-        if not trainings:
-            await query.answer("Нет предстоящих тренировок")
-            message = "Нет предстоящих тренировок"
-            reply_markup = get_standard_keyboard()
-            await query.message.reply_text(message, reply_markup=reply_markup)
-            return
-
-        # Формируем сообщение со списком участников для каждой тренировки
-        message = "👥 *Участники тренировок:*\n\n"
-
-        for training in trainings:
-            message += f"📅 *{training.date_time.strftime('%d.%m.%Y %H:%M')}*\n"
-            message += f"👥 Участников: {len(training.registrations)}/{training.max_participants}\n\n"
-
-            if not training.registrations:
-                message += "Пока никто не записался\n\n"
-                continue
-
-            # Сортируем участников: сначала вратари, потом игроки по майкам
-            goalkeepers = []
-            light_players = []
-            dark_players = []
-            blue_players = []
-            yellow_players = []
-            unassigned = []
-
-            jersey_emojis = {
-                'light': '⚪',
-                'dark': '⚫',
-                'blue': '🔵',
-                'yellow': '🟡'
-            }
-
-            for reg in training.registrations:
-                display_name = reg.display_name or reg.username or 'Без имени'
-
-                # Получаем статус team_assigned из таблицы TeamAssignment
-                team_assignment = (await session.execute(
-                    select(TeamAssignment).filter_by(training_id=training.id, user_id=reg.user_id)
-                )).scalars().first()
-                team_assigned = team_assignment.team_assigned if team_assignment else False
-
-                if reg.goalkeeper:
-                    goalkeepers.append((display_name, reg.jersey_type, reg.paid))
-                elif team_assigned and reg.jersey_type and reg.position_type:
-                    # Добавляем информацию об амплуа для полевых игроков
-                    position_info = ""
-                    if reg.position_type:
-                        position_info = f" - {POSITION_LABELS.get(reg.position_type, '—')}"
-
-                    if reg.jersey_type.value == 'light':
-                        light_players.append((display_name, reg.paid, position_info))
-                    elif reg.jersey_type.value == 'dark':
-                        dark_players.append((display_name, reg.paid, position_info))
-                    elif reg.jersey_type.value == 'blue':
-                        blue_players.append((display_name, reg.paid, position_info))
-                    elif reg.jersey_type.value == 'yellow':
-                        yellow_players.append((display_name, reg.paid, position_info))
-                else:
-                    unassigned.append((display_name, reg.paid))
-
-            # Выводим вратарей
-            if goalkeepers:
-                message += "🥅 *Вратари:*\n"
-                for name, jersey_type, paid in goalkeepers:
-                    jersey_emoji = jersey_emojis.get(jersey_type.value, '👕') if jersey_type else '👕'
-                    message += f"• {escape_markdown(name)} {jersey_emoji}\n"
-                message += "\n"
-
-            # Выводим игроков по цветам маек
-            if light_players:
-                message += "⚪ *Белые:*\n"
-                for name, paid, position_info in light_players:
-                    message += f"• {escape_markdown(name)}{position_info}\n"
-                message += "\n"
-
-            if dark_players:
-                message += "⚫ *Черные:*\n"
-                for name, paid, position_info in dark_players:
-                    message += f"• {escape_markdown(name)}{position_info}\n"
-                message += "\n"
-
-            if blue_players:
-                message += "🔵 *Синие:*\n"
-                for name, paid, position_info in blue_players:
-                    message += f"• {escape_markdown(name)}{position_info}\n"
-                message += "\n"
-
-            if yellow_players:
-                message += "🟡 *Желтые:*\n"
-                for name, paid, position_info in yellow_players:
-                    message += f"• {escape_markdown(name)}{position_info}\n"
-                message += "\n"
-
-            # Выводим нераспределенных участников
-            if unassigned:
-                message += "❓ *Нераспределенные:*\n"
-                for name, paid in unassigned:
-                    message += f"• {escape_markdown(name)}\n"
-                message += "\n"
-
-            message += "━━━━━━━━━━━━━━━\n\n"
-
-    # Создаем клавиатуру с кнопкой возврата
-    keyboard = [
-        [InlineKeyboardButton("🔙 Вернуться в меню", callback_data='start')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     await query.answer()
-    await query.message.reply_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+    async with session_scope() as session:
+        trainings = (await session.execute(
+            select(Training).where(Training.date_time > datetime.now()).order_by(Training.date_time)
+        )).scalars().all()
+        if not trainings:
+            await query.message.reply_text("Нет предстоящих тренировок", reply_markup=get_standard_keyboard())
+            return
+        settings = await get_settings(session)
+        for training in trainings:
+            view = await build_roster_view(session, training, settings)
+            await query.message.reply_text(
+                render_roster_text(view), reply_markup=get_attendance_keyboard(training.id),
+            )
+
+
+async def remember_decline(session, training_id, user_id, display_name=None):
+    decline = await session.get(TrainingDecline, (training_id, user_id))
+    if decline is None:
+        session.add(TrainingDecline(training_id=training_id, user_id=user_id, display_name=display_name))
+    elif display_name:
+        decline.display_name = display_name
+
+
+@handle_telegram_errors
+async def decline_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = update.effective_user
+    training_id = int(query.data.split('_')[1])
+    async with session_scope() as session:
+        training = (await session.execute(
+            select(Training).where(Training.id == training_id).where(Training.date_time > datetime.now())
+        )).scalars().first()
+        if training is None:
+            await query.answer("Тренировка не найдена или уже прошла")
+            return
+        if user.username:
+            await update_temporary_user_id(session, user.id, user.username)
+        registration = (await session.execute(
+            select(Registration).filter_by(training_id=training_id, user_id=user.id)
+        )).scalars().first()
+        await remember_decline(session, training_id, user.id,
+                               (registration.display_name if registration else None) or user.full_name)
+        if registration:
+            await session.delete(registration)
+        await session.commit()
+        schedule_roster_update(training_id)
+        view = await build_roster_view(session, training, await get_settings(session))
+    await query.answer("Отмечено: вы не придёте")
+    await query.message.reply_text(render_roster_text(view), reply_markup=get_attendance_keyboard(training_id))
+
 
 async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -700,6 +649,8 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
                 user_prefs.display_name = registration.display_name
 
             cancelled_training_id = registration.training_id
+            await remember_decline(session, cancelled_training_id, user_id,
+                                   registration.display_name or registration.username)
             await session.delete(registration)
             await session.commit()
             schedule_roster_update(cancelled_training_id)
@@ -711,71 +662,16 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.answer("Запись не найдена")
 
 async def view_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда для просмотра участников ближайшей тренировки"""
+    """Полный состав ближайшего события с ответами игроков."""
     async with session_scope() as session:
-        # Получаем ближайшую тренировку
         training = (await session.execute(
-            select(Training)
-            .where(Training.date_time > datetime.now())
-            .order_by(Training.date_time)
+            select(Training).where(Training.date_time > datetime.now()).order_by(Training.date_time)
         )).scalars().first()
-
-        if not training:
-            message = "Нет запланированных тренировок."
-            reply_markup = get_standard_keyboard()
-            await update.message.reply_text(message, reply_markup=reply_markup)
+        if training is None:
+            await update.message.reply_text("Нет запланированных тренировок.", reply_markup=get_standard_keyboard())
             return
-
-        # Получаем список участников
-        registrations = (await session.execute(
-            select(Registration).filter_by(training_id=training.id)
-        )).scalars().all()
-
-        # Формируем сообщение
-        message = f"📅 Тренировка {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
-        message += f"👥 Участники ({len(registrations)}/{training.max_participants}):\n\n"
-
-        if registrations:
-            for i, reg in enumerate(registrations, 1):
-                # Используем display_name если есть, иначе username
-                display_name = reg.display_name or reg.username or "Без имени"
-
-                # Получаем статус team_assigned из таблицы TeamAssignment
-                team_assignment = (await session.execute(
-                    select(TeamAssignment).filter_by(training_id=training.id, user_id=reg.user_id)
-                )).scalars().first()
-                team_assigned = team_assignment.team_assigned if team_assignment else False
-
-                # Если команда назначена, показываем полную информацию
-                if team_assigned:
-                    # Добавляем информацию о выбранной футболке
-                    jersey_emojis = {
-                        'light': '⚪',
-                        'dark': '⚫',
-                        'blue': '🔵',
-                        'yellow': '🟡'
-                    }
-                    if reg.jersey_type:
-                        jersey_info = jersey_emojis.get(reg.jersey_type.value, '👕')
-                        message += f"{i}. {display_name} {jersey_info}"
-                    else:
-                        message += f"{i}. {display_name}"
-
-                    # Добавляем информацию об амплуа для полевых игроков
-                    if not reg.goalkeeper and reg.position_type:
-                        message += f" - {POSITION_LABELS.get(reg.position_type, '—')}"
-
-                    message += "\n"
-                else:
-                    # Если команда не назначена, показываем только фамилию
-                    # Извлекаем фамилию из полного имени (последнее слово)
-                    surname = display_name.split()[-1] if display_name else "Без имени"
-                    message += f"{i}. {surname}\n"
-        else:
-            message += "Пока никто не записался"
-
-    reply_markup = get_info_keyboard()
-    await update.message.reply_text(message, reply_markup=reply_markup)
+        view = await build_roster_view(session, training, await get_settings(session))
+    await update.message.reply_text(render_roster_text(view), reply_markup=get_attendance_keyboard(training.id))
 
 async def show_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список доступных команд"""
@@ -845,6 +741,7 @@ async def start_bot():
     application.add_handler(CommandHandler("participants", view_participants))
     application.add_handler(CommandHandler("test_weekly_post", test_weekly_post))
     application.add_handler(CallbackQueryHandler(register_training, pattern=r"^register_\d+$"))
+    application.add_handler(CallbackQueryHandler(decline_training, pattern=r"^decline_\d+$"))
     application.add_handler(CallbackQueryHandler(show_schedule, pattern="^schedule$"))
     application.add_handler(CallbackQueryHandler(show_my_registrations, pattern="^my_registrations$"))
     application.add_handler(CallbackQueryHandler(cancel_registration, pattern=r"^cancel_\d+$"))
@@ -953,6 +850,8 @@ async def handle_cancel_registration(update: Update, context: ContextTypes.DEFAU
         if len(active_registrations) == 1:
             registration = active_registrations[0]
             cancelled_training_id = registration.training_id
+            await remember_decline(session, cancelled_training_id, user_id,
+                                   registration.display_name or registration.username)
             await session.delete(registration)
             await session.commit()
             schedule_roster_update(cancelled_training_id)

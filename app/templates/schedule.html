@@ -634,6 +634,7 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
     const blueChecked = (effectiveJersey === 'blue') ? 'checked' : '';
     const yellowChecked = (effectiveJersey === 'yellow') ? 'checked' : '';
     const redChecked = (effectiveJersey === 'red') ? 'checked' : '';
+    const greenChecked = (effectiveJersey === 'green') ? 'checked' : '';
     const savedJerseyType = participant.jersey_type || '';
     
     
@@ -790,6 +791,20 @@ function createParticipantRow(participant, index, tbody, trainingId, isGoalkeepe
                                onchange="checkSelectionChanges(${trainingId})">
                         <label class="form-check-label ms-1" for="red-${trainingId}-${index}">
                             <span class="jersey-circle jersey-circle--red" title="Красная"></span>
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio"
+                               name="jersey-type-${trainingId}-${participant.name}"
+                               id="green-${trainingId}-${index}"
+                               value="green"
+                               data-participant="${participant.name}"
+                               data-participant-id="${participant.id}"
+                               ${greenChecked}
+                               data-saved-jersey="${savedJerseyType}"
+                               onchange="checkSelectionChanges(${trainingId})">
+                        <label class="form-check-label ms-1" for="green-${trainingId}-${index}">
+                            <span class="jersey-circle jersey-circle--green" title="Зелёная"></span>
                         </label>
                     </div>
                 </div>
@@ -2049,7 +2064,7 @@ function sendWeeklyPost() {
 
 .jersey-options-grid {
     display: grid;
-    /* три колонки: цветов стало пять */
+    /* шесть цветов в два ряда */
     grid-template-columns: repeat(3, auto);
     gap: 0.25rem 0.5rem;
     justify-items: center;
@@ -2080,6 +2095,9 @@ function sendWeeklyPost() {
 }
 .jersey-circle--red {
     background: #e53935;
+}
+.jersey-circle--green {
+    background: #43a047;
 }
 .roster-preview {
     white-space: pre-wrap;

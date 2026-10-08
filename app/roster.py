@@ -19,7 +19,7 @@ from typing import Optional
 from sqlalchemy import select
 
 from .models import (
-    EventType, JerseyType, PositionType, Player, Registration, SeasonPass, Training, UserPreferences,
+    EventType, JerseyType, PositionType, Player, Registration, SeasonPass, Training, TrainingDecline, UserPreferences,
 )
 
 # --- Внешний вид -----------------------------------------------------------------
@@ -32,6 +32,7 @@ JERSEY_SQUARE = {
     JerseyType.DARK: "⬛️",
     JerseyType.RED: "🟥",
     JerseyType.BLUE: "🟦",
+    JerseyType.GREEN: "🟩",
 }
 
 # Порядок групп и порядок внутри группы берутся из порядка объявления в models.py.
@@ -52,6 +53,7 @@ JERSEY_LABELS = {
     JerseyType.DARK: "Чёрный",
     JerseyType.RED: "Красный",
     JerseyType.BLUE: "Синий",
+    JerseyType.GREEN: "Зелёный",
 }
 
 # Своим списком, а не strftime('%A'): в контейнере локаль C, и там был бы английский.
@@ -67,6 +69,7 @@ MONTHS_RU = [
 
 MARK_PASS = "(А)"
 MARK_REGISTERED = "✅"
+MARK_DECLINED = "➖"
 MARK_PAID = "₽"
 
 DEFAULT_RESERVE_SLOTS = 3
@@ -87,6 +90,7 @@ class RosterLine:
     has_pass: bool = False
     registered: bool = False
     paid: bool = False
+    declined: bool = False
 
 
 @dataclass
@@ -126,7 +130,9 @@ def render_line(line: RosterLine) -> str:
     text = f"{line.square}{line.name}"
     if line.has_pass:
         text += f" {MARK_PASS}"
-    if line.registered:
+    if line.declined:
+        text += f" {MARK_DECLINED}"
+    elif line.registered:
         text += f" {MARK_REGISTERED}"
     if line.paid:
         text += f" {MARK_PAID}"
@@ -292,12 +298,16 @@ async def build_roster_view(session, training: Training, settings=None) -> Roste
         select(Registration).where(Registration.training_id == training.id)
     )).scalars().all()
     registration_by_user = {r.user_id: r for r in registrations}
+    declines = (await session.execute(
+        select(TrainingDecline).where(TrainingDecline.training_id == training.id)
+    )).scalars().all()
+    decline_by_user = {d.user_id: d for d in declines}
 
     roster_players = (await session.execute(
         select(Player).where(Player.is_roster_member.is_(True)).order_by(Player.id)
     )).scalars().all()
 
-    user_ids = {p.user_id for p in roster_players} | set(registration_by_user)
+    user_ids = {p.user_id for p in roster_players} | set(registration_by_user) | set(decline_by_user)
     prefs_by_user = {}
     if user_ids:
         prefs_rows = (await session.execute(
@@ -341,6 +351,7 @@ async def build_roster_view(session, training: Training, settings=None) -> Roste
             # Галочка означает «человек подтвердил, что придёт», а не «есть строка
             # в базе»: запись мог создать администратор, внося состав руками.
             registered=bool(registration is not None and registration.self_registered),
+            declined=player.user_id in decline_by_user,
             # Абонемент закрывает оплату всех тренировок месяца, поэтому ₽ ставится
             # и тогда, когда флаг в регистрации почему-то не проставился.
             paid=bool(registration is not None and (registration.paid or has_pass)),
@@ -396,6 +407,16 @@ async def build_roster_view(session, training: Training, settings=None) -> Roste
             has_pass=has_pass,
             registered=bool(registration.self_registered),
             paid=bool(registration.paid or has_pass),
+        ))
+
+    # Отказавшиеся гости остаются видимыми в резерве, но не занимают место.
+    for decline in declines:
+        if decline.user_id in roster_user_ids or decline.user_id in registration_by_user:
+            continue
+        prefs = prefs_by_user.get(decline.user_id)
+        view.reserve.append(RosterLine(
+            square="", name=(prefs.display_name if prefs else None)
+            or decline.display_name or "Без имени", declined=True,
         ))
 
     return view

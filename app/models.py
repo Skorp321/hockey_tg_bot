@@ -51,6 +51,7 @@ class JerseyType(enum.Enum):
     DARK = "dark"   # Черная
     RED = "red"  # Красная
     BLUE = "blue"   # Синяя
+    GREEN = "green"  # Зелёная
 
 # Порядок объявления = порядок игроков внутри цветной группы.
 class PositionType(enum.Enum):
@@ -104,7 +105,17 @@ class Training(Base):
     signup_deadline_text = Column(Text, nullable=True)  # Свободный текст дедлайна в шапке
     registrations = relationship('Registration', back_populates='training', cascade='all, delete-orphan')
     team_assignments = relationship('TeamAssignment', cascade='all, delete-orphan')
+    declines = relationship('TrainingDecline', cascade='all, delete-orphan')
     messages = relationship('TrainingMessage', back_populates='training', cascade='all, delete-orphan')
+
+class TrainingDecline(Base):
+    """Явный отказ от события: не занимает место и не создаёт долг по оплате."""
+    __tablename__ = 'training_declines'
+
+    training_id = Column(Integer, ForeignKey('trainings.id', ondelete='CASCADE'), primary_key=True)
+    user_id = Column(BigInteger, primary_key=True)
+    display_name = Column(String(100), nullable=True)
+
 
 class Registration(Base):
     __tablename__ = 'registrations'
