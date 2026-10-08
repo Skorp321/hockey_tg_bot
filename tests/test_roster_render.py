@@ -10,7 +10,7 @@ from datetime import datetime, time
 
 from app.models import JerseyType
 from app.roster import (
-    GOALKEEPER_SQUARE, JERSEY_SQUARE, RosterLine, RosterView,
+    GAME_LABEL, GOALKEEPER_SQUARE, JERSEY_SQUARE, RosterLine, RosterView,
     TELEGRAM_HARD_LIMIT, format_date_line, format_time_line,
     render_roster_text, telegram_length,
 )
@@ -104,6 +104,14 @@ def sample_view():
 
 def test_matches_customer_example_exactly():
     assert render_roster_text(sample_view()) == EXPECTED
+
+
+def test_game_label_goes_above_date():
+    view = sample_view()
+    view.event_label = GAME_LABEL
+    lines = render_roster_text(view).splitlines()
+    date_index = lines.index("8.09 Вторник")
+    assert lines[date_index - 1] == GAME_LABEL
 
 
 def test_date_line_day_without_leading_zero_month_with():
