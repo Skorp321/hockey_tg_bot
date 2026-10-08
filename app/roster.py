@@ -22,6 +22,8 @@ from .models import (
     EventType, JerseyType, PositionType, Player, Registration, SeasonPass, Training, TrainingDecline, UserPreferences,
 )
 
+from .settings import DEFAULTS
+
 # --- Внешний вид -----------------------------------------------------------------
 
 GOALKEEPER_SQUARE = "🔲"
@@ -328,7 +330,9 @@ async def build_roster_view(session, training: Training, settings=None) -> Roste
         date_line=format_date_line(training.date_time),
         time_line=format_time_line(training.date_time, training.end_time),
         event_label=GAME_LABEL if training.event_type == EventType.GAME.value else None,
-        venue=training.venue or settings.get("roster.default_venue"),
+        venue=(training.venue or "").strip()
+        or (settings.get("roster.default_venue") or "").strip()
+        or DEFAULTS["roster.default_venue"],
         deadline_text=training.signup_deadline_text or settings.get("roster.default_deadline_text"),
         reserve_slots=int(settings.get("roster.reserve_slots", DEFAULT_RESERVE_SLOTS)),
     )
@@ -348,10 +352,9 @@ async def build_roster_view(session, training: Training, settings=None) -> Roste
             square=GOALKEEPER_SQUARE,
             name=name,
             has_pass=has_pass,
-            # Галочка означает «человек подтвердил, что придёт», а не «есть строка
-            # в базе»: запись мог создать администратор, внося состав руками.
-            registered=bool(registration is not None and registration.self_registered),
-            declined=player.user_id in decline_by_user,
+            # Любая активная запись даёт галочку, включая добавление в админке.
+            registered=registration is not None,
+            declined=registration is None and player.user_id in decline_by_user,
             # Абонемент закрывает оплату всех тренировок месяца, поэтому ₽ ставится
             # и тогда, когда флаг в регистрации почему-то не проставился.
             paid=bool(registration is not None and (registration.paid or has_pass)),
@@ -405,7 +408,7 @@ async def build_roster_view(session, training: Training, settings=None) -> Roste
             square="",
             name=name,
             has_pass=has_pass,
-            registered=bool(registration.self_registered),
+            registered=True,
             paid=bool(registration.paid or has_pass),
         ))
 

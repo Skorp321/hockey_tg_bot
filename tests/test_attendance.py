@@ -154,3 +154,52 @@ def test_participants_available_without_registration():
     for keyboard in (handlers.get_standard_keyboard(), handlers.get_info_keyboard()):
         assert any(button.callback_data == 'view_participants'
                    for row in keyboard.inline_keyboard for button in row)
+
+
+async def test_preview_marks_admin_registration_in_main_roster_and_reserve(db):
+    from app.web.routes import preview_roster
+    maker, tid = db
+    async with maker() as s:
+        s.add_all([
+            Registration(training_id=tid, user_id=1, display_name='Первый Игрок', self_registered=False),
+            Registration(training_id=tid, user_id=3, display_name='Гость Третий', self_registered=False),
+        ])
+        await s.commit()
+        preview = await preview_roster(tid, session=s, _=True)
+    assert preview['success']
+    assert '⬜️Первый Игрок ✅' in preview['text']
+    assert '1. Гость Третий ✅' in preview['text']
+    assert '🟩Второй Игрок ✅' not in preview['text']
+
+
+async def test_preview_active_registration_overrides_previous_decline(db):
+    from app.web.routes import preview_roster
+    maker, tid = db
+    async with maker() as s:
+        s.add(TrainingDecline(training_id=tid, user_id=1))
+        s.add(Registration(training_id=tid, user_id=1, self_registered=False))
+        await s.commit()
+        preview = await preview_roster(tid, session=s, _=True)
+    assert '⬜️Первый Игрок ✅' in preview['text']
+    assert 'Первый Игрок ➖' not in preview['text']
+
+
+@pytest.mark.parametrize('venue, configured, expected', [
+    (None, None, 'Арена Айс Атлетикс'),
+    ('  ', '  ', 'Арена Айс Атлетикс'),
+    (None, 'Ледовый дворец Северный', 'Ледовый дворец Северный'),
+    ('Ледовый дворец Центральный', 'Другая арена', 'Ледовый дворец Центральный'),
+])
+async def test_preview_header_always_includes_venue(db, venue, configured, expected):
+    from app.settings import set_setting
+    from app.web.routes import preview_roster
+    maker, tid = db
+    async with maker() as s:
+        training = await s.get(Training, tid)
+        training.venue = venue
+        if configured is not None:
+            await set_setting(s, 'roster.default_venue', configured)
+        await s.commit()
+        preview = await preview_roster(tid, session=s, _=True)
+    assert preview['success']
+    assert preview['text'].splitlines()[2] == expected
