@@ -1,18 +1,19 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h2 class="mb-0">Постоянный состав</h2>
+<div class="page-heading">
+    <div><div class="eyebrow">Люди, которые делают игру</div><h2 class="mb-0">Постоянный состав</h2></div>
     <span class="badge bg-primary fs-6">В составе: <span id="rosterCount">{{ roster_count }}</span></span>
 </div>
 
-<p class="text-muted">
+<p class="text-muted roster-help">
     Игроки из состава попадают в список тренировки сразу, ещё до записи — напротив фамилии
     появляется «+», когда человек записался, «-», когда отказался, и ✅, когда оплатил.
     Кто не в составе, но записался, уходит в резерв.
     Цвет и амплуа задают порядок строк в списке.
 </p>
 
+<div class="toolbar-search"><label class="visually-hidden" for="roster-search">Найти игрока</label><input id="roster-search" type="search" class="form-control" placeholder="Поиск по имени или Telegram"></div>
 <div class="table-responsive">
     <table class="table table-hover align-middle">
         <thead>

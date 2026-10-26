@@ -1,14 +1,10 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h2>Управление сообщениями</h2>
-
-<div class="mb-4">
-    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addMessageModal">
-        ➕ Создать сообщение
-    </button>
+<div class="page-heading">
+    <div><div class="eyebrow">На связи с командой</div><h2>Сообщения</h2><p class="page-description">Объявления и напоминания — в нужное время.</p></div>
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addMessageModal">＋ Создать сообщение</button>
 </div>
-
 <!-- Таблица запланированных сообщений -->
 <div class="table-responsive">
     <table class="table">
@@ -80,6 +76,8 @@
                     </div>
                 </td>
             </tr>
+            {% else %}
+            <tr><td colspan="6" class="empty-state"><strong>Здесь будут сообщения команде</strong><p>Создайте объявление и отправьте его сейчас или по расписанию.</p></td></tr>
             {% endfor %}
         </tbody>
     </table>

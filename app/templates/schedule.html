@@ -1,27 +1,29 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h2>Расписание тренировок</h2>
-
-<div class="mb-4 d-flex justify-content-between">
-    <button type="button" class="btn btn-success" onclick="sendWeeklyPost()">
-        📢 Отправить еженедельный пост
-    </button>
-    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addTrainingModal">
-        Добавить событие
-    </button>
+<div class="page-heading">
+    <div><div class="eyebrow">Команда на льду</div><h2>Расписание тренировок</h2><p class="page-description">Планируйте события, собирайте состав и следите за оплатой.</p></div>
+    <div class="heading-actions">
+        <button type="button" class="btn btn-secondary" onclick="sendWeeklyPost()">Отправить еженедельный пост</button>
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addTrainingModal">＋ Добавить событие</button>
+    </div>
+</div>
+<div class="summary-grid">
+    <div class="summary-card"><div><span class="summary-label">Предстоящие события</span><strong class="summary-value">{{ upcoming_trainings|length }}</strong></div><span class="summary-icon" aria-hidden="true">↗</span></div>
+    <div class="summary-card"><div><span class="summary-label">Записи на события</span><strong class="summary-value">{% set totals = namespace(count=0) %}{% for training in upcoming_trainings %}{% set totals.count = totals.count + training.registrations|length %}{% endfor %}{{ totals.count }}</strong></div><span class="summary-icon" aria-hidden="true">♧</span></div>
+    <div class="summary-card"><div><span class="summary-label">Завершённые события</span><strong class="summary-value">{{ past_trainings|length }}</strong></div><span class="summary-icon" aria-hidden="true">✓</span></div>
 </div>
 
 <!-- Вкладки -->
 <ul class="nav nav-tabs" id="trainingTabs" role="tablist">
     <li class="nav-item" role="presentation">
         <button class="nav-link active" id="upcoming-tab" data-bs-toggle="tab" data-bs-target="#upcoming" type="button" role="tab" aria-controls="upcoming" aria-selected="true">
-            📅 Будущие тренировки
+            Предстоящие
         </button>
     </li>
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="past-tab" data-bs-toggle="tab" data-bs-target="#past" type="button" role="tab" aria-controls="past" aria-selected="false">
-            📋 Прошедшие тренировки
+            Архив
         </button>
     </li>
 </ul>
