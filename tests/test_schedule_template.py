@@ -101,3 +101,14 @@ def test_inline_js_parses(name, context, tmp_path):
     path.write_text(code, encoding="utf-8")
     result = subprocess.run([node, "--check", str(path)], capture_output=True, text=True)
     assert result.returncode == 0, f"{name}: синтаксическая ошибка\n{result.stderr[:800]}"
+
+
+def test_event_time_inputs_are_24h_and_prefilled(html):
+    """type="time" показывает AM/PM при английской локали браузера — поэтому текст с маской."""
+    for field_id, setting in (("training_time", "roster.default_start_time"),
+                              ("training_end_time", "roster.default_end_time")):
+        start = html.index(f'id="{field_id}"')
+        tag = html[html.rindex("<input", 0, start):html.index(">", start)]
+        assert 'type="time"' not in tag
+        assert 'pattern="([01][0-9]|2[0-3]):[0-5][0-9]"' in tag
+        assert f"settings.get('{setting}'" in tag

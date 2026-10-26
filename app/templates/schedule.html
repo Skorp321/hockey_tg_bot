@@ -265,13 +265,20 @@
                         <input type="date" class="form-control" id="training_date" name="training_date" required>
                     </div>
                     <div class="mb-3">
-                        <label for="training_time" class="form-label">Время (12-часовой формат)</label>
-                        <input type="time" class="form-control" id="training_time" name="training_time" step="60" required>
-                        <small class="form-text text-muted">Формат: ЧЧ:ММ (например: 11:30)</small>
+                        <label for="training_time" class="form-label">Время начала</label>
+                        {# Текст, а не type="time": тот показывает AM/PM при английской локали
+                           браузера, и переключить его на 24 часа со страницы нельзя #}
+                        <input type="text" class="form-control time-24h" id="training_time" name="training_time"
+                               inputmode="numeric" maxlength="5" placeholder="21:30" required
+                               pattern="([01][0-9]|2[0-3]):[0-5][0-9]" title="ЧЧ:ММ, 24-часовой формат"
+                               value="{{ settings.get('roster.default_start_time', '') }}">
+                        <small class="form-text text-muted">Формат: ЧЧ:ММ, 24 часа (например: 21:30)</small>
                     </div>
                     <div class="mb-3">
                         <label for="training_end_time" class="form-label">Время окончания</label>
-                        <input type="time" class="form-control" id="training_end_time" name="training_end_time" step="60"
+                        <input type="text" class="form-control time-24h" id="training_end_time" name="training_end_time"
+                               inputmode="numeric" maxlength="5" placeholder="23:00"
+                               pattern="([01][0-9]|2[0-3]):[0-5][0-9]" title="ЧЧ:ММ, 24-часовой формат"
                                value="{{ settings.get('roster.default_end_time', '') }}">
                         <small class="form-text text-muted">Показывается в шапке списка: «21.30 - 23.00»</small>
                     </div>
@@ -1213,8 +1220,9 @@ document.getElementById('addTrainingForm').addEventListener('submit', function(e
     
     // Объединяем дату и время в один параметр
     const date = document.getElementById('training_date').value;
-    const time = document.getElementById('training_time').value;
-    
+    // Нормализуем и здесь: при отправке по Enter blur у поля не срабатывает
+    const time = normalizeTime24(document.getElementById('training_time').value);
+
     if (!date || !time) {
         alert('Пожалуйста, заполните дату и время');
         return;
@@ -1224,7 +1232,7 @@ document.getElementById('addTrainingForm').addEventListener('submit', function(e
     formData.append('date_time', date + 'T' + time);
     formData.append('max_participants', document.getElementById('max_participants').value);
     formData.append('event_type', document.getElementById('event_type').value);
-    formData.append('end_time', document.getElementById('training_end_time').value);
+    formData.append('end_time', normalizeTime24(document.getElementById('training_end_time').value));
     formData.append('venue', document.getElementById('training_venue').value);
     formData.append('signup_deadline_text', document.getElementById('training_deadline').value);
     
@@ -1918,34 +1926,25 @@ document.addEventListener('DOMContentLoaded', function() {
         loadParticipants(trainingId);
     });
     
-    // Настраиваем поле времени для 24-часового формата
-    const timeInput = document.getElementById('training_time');
-    if (timeInput) {
-        // Устанавливаем атрибуты для принуждения к 24-часовому формату
-        timeInput.setAttribute('step', '60');
-        
-        // Добавляем обработчик для проверки формата
-        timeInput.addEventListener('input', function() {
-            const value = this.value;
-            if (value) {
-                // Проверяем, что время в правильном формате (HH:MM)
-                const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
-                if (!timeRegex.test(value)) {
-                    this.setCustomValidity('Пожалуйста, введите время в формате ЧЧ:ММ (например: 19:30)');
-                } else {
-                    this.setCustomValidity('');
-                }
+    // Поля времени — текстовые с 24-часовым форматом ЧЧ:ММ. Проверку делает
+    // атрибут pattern, здесь только удобство ввода: «2130» -> «21:30», «9:30» -> «09:30»
+    document.querySelectorAll('.time-24h').forEach(function(input) {
+        input.addEventListener('input', function() {
+            const digits = this.value.replace(/\D/g, '');
+            if (!this.value.includes(':') && digits.length === 4) {
+                this.value = digits.slice(0, 2) + ':' + digits.slice(2);
             }
         });
-        
-        // Добавляем подсказку при фокусе
-        timeInput.addEventListener('focus', function() {
-            if (!this.value) {
-                this.placeholder = '19:30';
-            }
+        input.addEventListener('blur', function() {
+            this.value = normalizeTime24(this.value);
         });
-    }
+    });
 });
+
+function normalizeTime24(value) {
+    const match = value.trim().match(/^(\d{1,2}):?(\d{2})$/);
+    return match ? match[1].padStart(2, '0') + ':' + match[2] : value.trim();
+}
 
 // Функция для отправки еженедельного поста
 function sendWeeklyPost() {
@@ -2138,14 +2137,14 @@ tr.selected:hover {
     margin-left: 0.5rem;
 }
 
-/* Стили для поля времени */
-#training_time {
+/* Стили для полей времени */
+.time-24h {
     font-family: 'Courier New', monospace;
     font-size: 1.1em;
     letter-spacing: 0.1em;
 }
 
-#training_time:focus {
+.time-24h:focus {
     border-color: #007bff;
     box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
 }
