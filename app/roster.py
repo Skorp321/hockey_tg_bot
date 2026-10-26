@@ -70,9 +70,9 @@ MONTHS_RU = [
 ]
 
 MARK_PASS = "(А)"
-MARK_REGISTERED = "✅"
-MARK_DECLINED = "➖"
-MARK_PAID = "₽"
+MARK_REGISTERED = "+"
+MARK_DECLINED = "-"
+MARK_PAID = "✅"
 
 DEFAULT_RESERVE_SLOTS = 3
 
@@ -145,7 +145,12 @@ def _compose(view: RosterView, reserve: list, reserve_slots: int, note: Optional
     lines = []
 
     if view.deadline_text:
-        lines.append(f"❗️{view.deadline_text}")
+        # Текст, который уже начинается с «❗», выводится как есть: так поле в форме
+        # показывает ровно ту строку, что уйдёт в шапку, без второго знака впереди.
+        if view.deadline_text.startswith("❗"):
+            lines.append(view.deadline_text)
+        else:
+            lines.append(f"❗️{view.deadline_text}")
         lines.append("")
 
     if view.event_label:
@@ -352,10 +357,10 @@ async def build_roster_view(session, training: Training, settings=None) -> Roste
             square=GOALKEEPER_SQUARE,
             name=name,
             has_pass=has_pass,
-            # Любая активная запись даёт галочку, включая добавление в админке.
+            # Любая активная запись даёт «+», включая добавление в админке.
             registered=registration is not None,
             declined=registration is None and player.user_id in decline_by_user,
-            # Абонемент закрывает оплату всех тренировок месяца, поэтому ₽ ставится
+            # Абонемент закрывает оплату всех тренировок месяца, поэтому ✅ ставится
             # и тогда, когда флаг в регистрации почему-то не проставился.
             paid=bool(registration is not None and (registration.paid or has_pass)),
         )

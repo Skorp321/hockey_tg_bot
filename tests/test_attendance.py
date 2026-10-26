@@ -62,9 +62,9 @@ async def test_decline_without_registration_and_repeated_click(db):
         assert len((await s.execute(select(TrainingDecline))).scalars().all()) == 1
         assert not (await s.execute(select(Registration))).scalars().all()
     text = await text_for(maker, tid)
-    assert '⬜️Первый Игрок ➖' in text
+    assert '⬜️Первый Игрок -' in text
     assert '🟩Второй Игрок' in text
-    assert 'Второй Игрок ✅' not in text
+    assert 'Второй Игрок +' not in text
 
 
 async def test_decline_then_register_then_cancel(db):
@@ -76,9 +76,9 @@ async def test_decline_then_register_then_cancel(db):
         reg = (await s.execute(select(Registration))).scalars().one()
         assert reg.self_registered
         rid = reg.id
-    assert '⬜️Первый Игрок ✅' in await text_for(maker, tid)
+    assert '⬜️Первый Игрок +' in await text_for(maker, tid)
     await handlers.cancel_registration(update_for(f'cancel_{rid}'), None)
-    assert '⬜️Первый Игрок ➖' in await text_for(maker, tid)
+    assert '⬜️Первый Игрок -' in await text_for(maker, tid)
     async with maker() as s:
         assert not (await s.execute(select(Registration))).scalars().all()
 
@@ -89,7 +89,7 @@ async def test_decline_removes_registered_place(db):
         s.add(Registration(training_id=tid, user_id=1, display_name='Первый Игрок', self_registered=True))
         await s.commit()
     await handlers.decline_training(update_for(f'decline_{tid}'), None)
-    assert '⬜️Первый Игрок ➖' in await text_for(maker, tid)
+    assert '⬜️Первый Игрок -' in await text_for(maker, tid)
     async with maker() as s:
         assert not (await s.execute(select(Registration))).scalars().all()
 
@@ -127,7 +127,7 @@ async def test_admin_registration_confirmation_clears_old_decline(db):
         s.add(TrainingDecline(training_id=tid, user_id=1))
         await s.commit()
     await handlers.register_training(update_for(f'register_{tid}'), SimpleNamespace())
-    assert '⬜️Первый Игрок ✅' in await text_for(maker, tid)
+    assert '⬜️Первый Игрок +' in await text_for(maker, tid)
     async with maker() as s:
         assert await s.get(TrainingDecline, (tid, 1)) is None
 
@@ -138,7 +138,7 @@ async def test_single_cancel_button_remembers_decline(db):
         s.add(Registration(training_id=tid, user_id=1, self_registered=True))
         await s.commit()
     await handlers.handle_cancel_registration(update_for('cancel_registration'), None)
-    assert '⬜️Первый Игрок ➖' in await text_for(maker, tid)
+    assert '⬜️Первый Игрок -' in await text_for(maker, tid)
 
 
 async def test_declined_guest_stays_visible_in_reserve(db):
@@ -147,7 +147,7 @@ async def test_declined_guest_stays_visible_in_reserve(db):
     update.effective_user.full_name = 'Гость Третий'
     await handlers.decline_training(update, None)
     text = await text_for(maker, tid)
-    assert '1. Гость Третий ➖' in text
+    assert '1. Гость Третий -' in text
 
 
 def test_participants_available_without_registration():
@@ -167,9 +167,9 @@ async def test_preview_marks_admin_registration_in_main_roster_and_reserve(db):
         await s.commit()
         preview = await preview_roster(tid, session=s, _=True)
     assert preview['success']
-    assert '⬜️Первый Игрок ✅' in preview['text']
-    assert '1. Гость Третий ✅' in preview['text']
-    assert '🟩Второй Игрок ✅' not in preview['text']
+    assert '⬜️Первый Игрок +' in preview['text']
+    assert '1. Гость Третий +' in preview['text']
+    assert '🟩Второй Игрок +' not in preview['text']
 
 
 async def test_preview_active_registration_overrides_previous_decline(db):
@@ -180,8 +180,8 @@ async def test_preview_active_registration_overrides_previous_decline(db):
         s.add(Registration(training_id=tid, user_id=1, self_registered=False))
         await s.commit()
         preview = await preview_roster(tid, session=s, _=True)
-    assert '⬜️Первый Игрок ✅' in preview['text']
-    assert 'Первый Игрок ➖' not in preview['text']
+    assert '⬜️Первый Игрок +' in preview['text']
+    assert 'Первый Игрок -' not in preview['text']
 
 
 @pytest.mark.parametrize('venue, configured, expected', [
@@ -197,6 +197,8 @@ async def test_preview_header_always_includes_venue(db, venue, configured, expec
     async with maker() as s:
         training = await s.get(Training, tid)
         training.venue = venue
+        # Без текста в шапке арена стоит третьей строкой: дата, время, арена
+        await set_setting(s, 'roster.default_deadline_text', '')
         if configured is not None:
             await set_setting(s, 'roster.default_venue', configured)
         await s.commit()

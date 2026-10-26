@@ -144,7 +144,7 @@ async def test_update_edits_when_roster_changes(db, bot):
 
     assert await rm.update_roster_message(training_id) is True
     assert len(bot.edited) == 1
-    assert "✅" in bot.edited[0]["text"], "записавшийся должен получить галочку"
+    assert "Иванова Алиса +" in bot.edited[0]["text"], "записавшийся должен получить «+»"
 
 
 async def test_not_modified_is_treated_as_success(db, bot):

@@ -133,7 +133,7 @@ class Registration(Base):
     last_payment_reminder = Column(DateTime, nullable=True)  # Время последнего напоминания об оплате
     # Нажал ли игрок «Записаться» сам. Запись, созданную администратором через
     # «Быстрое добавление», это не считает подтверждением: список показывает, кто
-    # ДОЛЖЕН быть на тренировке, а галочка — кто подтвердил, что придёт.
+    # ДОЛЖЕН быть на тренировке, а «+» — кто подтвердил, что придёт.
     self_registered = Column(Boolean, default=False, nullable=False)
     
     training = relationship('Training', back_populates='registrations')

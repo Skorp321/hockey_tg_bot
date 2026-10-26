@@ -884,7 +884,7 @@ async def handle_cancel_registration(update: Update, context: ContextTypes.DEFAU
 async def handle_buy_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Покупка абонемента на месяц.
 
-    Абонемент покрывает все тренировки календарного месяца, поэтому ₽ у его владельца
+    Абонемент покрывает все тренировки календарного месяца, поэтому ✅ у его владельца
     проставляется автоматически — и на уже существующих записях, и на будущих.
     """
     query = update.callback_query

@@ -127,7 +127,7 @@ def test_time_line_uses_dot_not_colon():
     assert format_time_line(datetime(2026, 9, 8, 9, 5)) == "09.05"
 
 
-def test_marks_order_is_pass_then_check_then_ruble():
+def test_marks_order_is_pass_then_plus_then_check():
     view = RosterView(date_line="1.01 Четверг", groups=[[
         RosterLine(square="🟦", name="Только записался", registered=True),
         RosterLine(square="🟦", name="Записался и оплатил", registered=True, paid=True),
@@ -135,9 +135,9 @@ def test_marks_order_is_pass_then_check_then_ruble():
         RosterLine(square="🟦", name="Ничего"),
     ]])
     lines = render_roster_text(view).splitlines()
-    assert "🟦Только записался ✅" in lines
-    assert "🟦Записался и оплатил ✅ ₽" in lines
-    assert "🟦С абонементом (А) ✅ ₽" in lines
+    assert "🟦Только записался +" in lines
+    assert "🟦Записался и оплатил + ✅" in lines
+    assert "🟦С абонементом (А) + ✅" in lines
     assert "🟦Ничего" in lines
 
 
@@ -145,7 +145,7 @@ def test_reserve_entries_then_empty_slots():
     view = sample_view()
     view.reserve = [RosterLine(square="", name="Гость Первый", registered=True)]
     text = render_roster_text(view)
-    assert "1. Гость Первый ✅" in text
+    assert "1. Гость Первый +" in text
     assert text.endswith("2.\n3.")
 
 
@@ -154,7 +154,7 @@ def test_reserve_longer_than_slots_is_not_truncated():
     view.reserve = [RosterLine(square="", name=f"Гость {i}", registered=True) for i in range(1, 6)]
     text = render_roster_text(view)
     for i in range(1, 6):
-        assert f"{i}. Гость {i} ✅" in text
+        assert f"{i}. Гость {i} +" in text
 
 
 def test_empty_training_still_renders_header_and_reserve():
@@ -188,11 +188,23 @@ def test_telegram_length_counts_utf16_units():
     assert len("🟦") == 1
 
 
-def test_checkmark_marks_registered_players():
+def test_plus_marks_registered_players():
     view = RosterView(date_line="1.01 Четверг", groups=[[
         RosterLine(square="⬜️", name="Не записан", registered=False),
         RosterLine(square="⬜️", name="Записан", registered=True),
     ]])
     lines = render_roster_text(view).splitlines()
     assert "⬜️Не записан" in lines
-    assert "⬜️Записан ✅" in lines
+    assert "⬜️Записан +" in lines
+
+
+def test_declined_gets_minus():
+    view = RosterView(date_line="1.01 Четверг", groups=[[
+        RosterLine(square="🟨", name="Чужаков Андрей", declined=True),
+    ]])
+    assert "🟨Чужаков Андрей -" in render_roster_text(view).splitlines()
+
+
+def test_deadline_text_with_own_exclamation_is_kept_as_is():
+    view = RosterView(date_line="27.10 Вторник", deadline_text="❗ Запись до 22:00 ❗")
+    assert render_roster_text(view).startswith("❗ Запись до 22:00 ❗\n\n27.10 Вторник")

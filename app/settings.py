@@ -14,7 +14,8 @@ from .models import AppSetting
 DEFAULTS = {
     # Шапка списка состава
     "roster.default_venue": "Арена Айс Атлетикс",
-    "roster.default_deadline_text": "",
+    # Предзаполняет поле «Текст в шапке» при создании тренировки или игры
+    "roster.default_deadline_text": "❗ Запись до 22:00 ❗",
     "roster.default_end_time": "",  # «23:00»; пусто — не показывать время окончания
     # Сколько пустых строк оставлять в блоке «Резерв»
     "roster.reserve_slots": "3",
