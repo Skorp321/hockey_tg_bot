@@ -8,8 +8,8 @@ app/web/routes.py уже импортирует из app/bot — обратно�
 формат можно было закрепить golden-тестом против настоящего примера.
 
 Разметка (`parse_mode`) не используется. Фамилии приходят от людей, `escape_markdown`
-в handlers.py экранирует только `_ * [` и не трогает `] ( )`, а мы дописываем литеральное
-«(А)». Обычный текст снимает целый класс ошибок разметки, ничего не теряя визуально.
+в handlers.py экранирует только `_ * [` и не трогает `] ( )`. Обычный текст снимает
+целый класс ошибок разметки, ничего не теряя визуально.
 """
 
 from dataclasses import dataclass, field
@@ -69,7 +69,6 @@ MONTHS_RU = [
     "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
 ]
 
-MARK_PASS = "(А)"
 MARK_REGISTERED = "+"
 MARK_DECLINED = "-"
 MARK_PAID = "✅"
@@ -130,8 +129,6 @@ def format_time_line(start: datetime, end: Optional[time] = None) -> str:
 
 def render_line(line: RosterLine) -> str:
     text = f"{line.square}{line.name}"
-    if line.has_pass:
-        text += f" {MARK_PASS}"
     if line.declined:
         text += f" {MARK_DECLINED}"
     elif line.registered:
