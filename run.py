@@ -108,7 +108,7 @@ async def main():
     try:
         # Запускаем веб-сервер
         print("🌐 Запуск веб-сервера...")
-        await serve(app, config)
+        await serve(app, config) # type: ignore
     except Exception as e:
         print(f"❌ Ошибка веб-сервера: {e}")
         if bot_app:
